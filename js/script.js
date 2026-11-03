@@ -133,34 +133,75 @@
   const durationCache = {};
 
   // ---------------------------------------------------------------------------
-  // Playlist scanning — reads the audio/ directory listing instead of a
-  // hand-maintained list. Requires a static server that serves directory
-  // indexes (python3 -m http.server, npx serve, ...).
+  // Playlist loading. On servers with directory indexes (python3 -m
+  // http.server, npx serve, ...) the audio/ listing is scraped directly, so
+  // dropped-in files appear with just a refresh. Static hosts without
+  // directory indexes (Vercel, GitHub Pages, ...) fall back to the generated
+  // audio/playlist.json manifest — regenerate it with
+  // `node scripts/generate-playlist.mjs` after adding tracks.
   // ---------------------------------------------------------------------------
-  const loadPlaylist = async () => {
-    const folderUrl = new URL(AUDIO_FOLDER, document.baseURI).href;
-    const response = await fetch(folderUrl);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    const doc = new DOMParser().parseFromString(await response.text(), "text/html");
-    const fileNames = [...doc.querySelectorAll("a[href]")]
-      .map((a) => {
-        try {
-          const href = a.getAttribute("href") || "";
-          if (href.startsWith("?")) return null; // sort/query links, not files
-          const url = new URL(href, folderUrl);
-          return decodeURIComponent(url.pathname.split("/").pop() || "");
-        } catch {
-          return null;
-        }
-      })
-      .filter((name) => name && name.toLowerCase().endsWith(".mp3"));
-
-    return [...new Set(fileNames)]
+  const normalizeFileNames = (fileNames) =>
+    [...new Set(fileNames)]
       .sort((a, b) =>
         a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
       )
       .map((name) => ({ name: name.slice(0, -4), path: AUDIO_FOLDER + name }));
+
+  const scanDirectoryListing = async (folderUrl) => {
+    const response = await fetch(folderUrl);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+    return normalizeFileNames(
+      [...doc.querySelectorAll("a[href]")]
+        .map((a) => {
+          try {
+            const href = a.getAttribute("href") || "";
+            if (href.startsWith("?")) return null; // sort/query links, not files
+            const url = new URL(href, folderUrl);
+            return decodeURIComponent(url.pathname.split("/").pop() || "");
+          } catch {
+            return null;
+          }
+        })
+        .filter((name) => name && name.toLowerCase().endsWith(".mp3"))
+    );
+  };
+
+  const loadManifest = async () => {
+    const manifestUrl = new URL(
+      AUDIO_FOLDER + "playlist.json",
+      document.baseURI
+    ).href;
+    const response = await fetch(manifestUrl);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const fileNames = await response.json();
+    if (!Array.isArray(fileNames)) throw new Error("Malformed playlist.json");
+    return normalizeFileNames(
+      fileNames.filter(
+        (name) => typeof name === "string" && name.toLowerCase().endsWith(".mp3")
+      )
+    );
+  };
+
+  const loadPlaylist = async () => {
+    const folderUrl = new URL(AUDIO_FOLDER, document.baseURI).href;
+    let scanFailure = null;
+    try {
+      const tracks = await scanDirectoryListing(folderUrl);
+      if (tracks.length) return tracks;
+    } catch (err) {
+      scanFailure = err; // no directory index — try the manifest below
+    }
+    try {
+      return await loadManifest();
+    } catch {
+      // The scrape worked but the folder is genuinely empty: report an empty
+      // playlist rather than a manifest error.
+      if (!scanFailure) return [];
+      throw scanFailure;
+    }
   };
 
   const renderPlaylistStatus = (message) => {
@@ -387,7 +428,7 @@
     } catch (err) {
       console.error("Playlist scan failed:", err);
       renderPlaylistStatus(
-        "Could not read the audio folder. Serve the app over HTTP (with directory listing enabled) and refresh."
+        "Could not read the audio folder. Serve the app over HTTP with directory listing enabled, or generate audio/playlist.json (node scripts/generate-playlist.mjs) and refresh."
       );
       return;
     }
