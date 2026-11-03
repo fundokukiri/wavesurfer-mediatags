@@ -3,17 +3,12 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-  <link rel="icon" href="assets//images/musical-note.png" type="image/png" />
-  <link rel="stylesheet" href="https://unpkg.com/swiper/swiper-bundle.min.css">
-	<link href='https://unpkg.com/boxicons@2.0.9/css/boxicons.min.css' rel='stylesheet'>
-	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta2/css/all.min.css">
-	<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap" rel="stylesheet" />
-	<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet" />
+  <link rel="icon" href="assets/images/musical-note.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap" rel="stylesheet" />
   <title>Music Player</title>
 </head>
 
@@ -25,50 +20,63 @@
       <div class="sidebar">
         <div class="sidebar-overlay"></div>
         <div class="sidebar-content">
-          <!-- <div class="top-head">
-            <div class="name">Fundoku's Music Player</div>
-            <div class="email">fundokukiri@gmail.com</div>
-          </div> -->
-          <div style="font-size: 15px;font-weight: bold;">PLAYLIST</div>
-          <div class="playlist">
-            <div class="row">
-                <div class="col-lg-12 col-md-12 col-sm-12 u-s-m-b-30">
-                    <div class="table-responsive">
-                        <div class="mini-playlist-container gl-scroll u-s-m-b-15">
-                            <table class="table-p">
-                                <tbody class="tbody">
-                                  <tr>
-                                    <td>
-                                      <div class="tbody-playlist" data-index="0">
-                                        <img src="assets/images/musical-note.png" alt="" style="height: 40px;width: 40px;">
-                                        <div class="track">
-                                          <div class="track-name">Track 1</div>
-                                          <div class="track-artist">Fundoku</div>
-                                        </div>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
+          <div class="sidebar-head">
+            <button id="search-toggle" class="head-btn" type="button" aria-label="Toggle search">
+              <span class="material-symbols-rounded">search</span>
+            </button>
+            <button id="fav-toggle" class="head-btn" type="button" aria-label="Show favorites only">
+              <span class="material-symbols-rounded">favorite</span>
+            </button>
+            <div class="head-center">
+              <span class="sidebar-title">Playlist</span>
+              <span class="playlist-subtitle" id="playlist-subtitle"></span>
             </div>
-        </div>
+            <button id="folder-open" class="head-btn accent" type="button" aria-label="Add music folder">
+              <span class="material-symbols-rounded">folder_open</span>
+            </button>
+            <button id="add-tracks" class="head-btn accent" type="button" aria-label="Add music files">
+              <span class="material-symbols-rounded">add</span>
+            </button>
+          </div>
+          <input id="local-files" type="file" accept="audio/*" multiple hidden>
+          <input id="folder-fallback" type="file" webkitdirectory hidden>
+          <div id="playlist-search-wrap">
+            <span class="material-symbols-rounded search-lead" aria-hidden="true">search</span>
+            <input id="playlist-search" type="search" placeholder="Search songs..." aria-label="Search songs"
+              autocomplete="off">
+          </div>
+          <button id="folder-restore" class="folder-restore" type="button" hidden>
+            <span class="material-symbols-rounded">folder_open</span>
+            <span>Reconnect music folder <b id="folder-restore-name"></b></span>
+          </button>
+          <div class="playlist">
+            <div class="mini-playlist-container">
+              <div class="tbody"></div>
+            </div>
+          </div>
+          <div id="folder-chip" hidden>
+            <span class="material-symbols-rounded">folder_open</span>
+            <span id="folder-chip-name"></span>
+            <button id="folder-unlink" type="button" aria-label="Unlink music folder">
+              <span class="material-symbols-rounded">close</span>
+            </button>
+          </div>
         </div>
       </div>
 
       <div class="art">
         <div class="album-art">
-          <img src="assets/images/default-icon.jpg" ondragstart="return false;">
+          <img src="assets/images/default-icon.jpg" alt="Album art" draggable="false">
         </div>
       </div>
 
       <div class="track-name">
         <p id="name">Music Player</p>
-        <p id="artist">By Fundokukiri</p> 
-        <p id="album">fundoku's Album</p> 
-      </div>  
+        <p id="artist">By Fundokukiri</p>
+        <p id="album">fundoku's Album</p>
+      </div>
+
+      <div id="player-error" class="player-error" role="alert" hidden></div>
 
       <div class="waveform">
         <div id="waveform"></div>
@@ -76,42 +84,57 @@
 
       <div class="track-time">
         <span id="current-time">--:--</span>
-        <input id="track-seek-bar" type="range" min="0" max="0" value="0"/>
+        <input id="track-seek-bar" type="range" min="0" max="0" value="0" aria-label="Seek">
         <span id="remaining-time">--:--</span>
       </div>
 
       <div class="track_control-btn">
-        <div class="repeat-btn">
-          <span class="material-symbols-rounded" id="repeat">repeat</span>
+        <div class="repeat-btn" role="button" aria-label="Repeat mode">
+          <span class="material-symbols-rounded">repeat</span>
         </div>
-        <span class="material-symbols-rounded" id="prev">skip_previous</span>
-        <div class="play-pause">
+        <span class="material-symbols-rounded" id="prev" role="button" aria-label="Previous track">skip_previous</span>
+        <div class="play-pause" role="button" aria-label="Play or pause">
           <span class="material-symbols-rounded">play_arrow</span>
         </div>
-        <span class="material-symbols-rounded" id="next">skip_next</span>
-        <div class="shuffleBtn">
-          <span class="material-symbols-rounded" id="shuffle">shuffle</span>
+        <span class="material-symbols-rounded" id="next" role="button" aria-label="Next track">skip_next</span>
+        <div class="shuffleBtn" role="button" aria-label="Shuffle">
+          <span class="material-symbols-rounded">shuffle</span>
         </div>
       </div>
 
       <div class="volume-control-btn">
-        <div class="mute-volume">
+        <div class="mute-volume" role="button" aria-label="Mute">
           <span class="material-symbols-rounded">volume_down</span>
         </div>
-        <input id="volume-control-slider" type="range" min="0" max="100" value="100" />
-        <div class="volume-up">
+        <input id="volume-control-slider" type="range" min="0" max="100" value="100" aria-label="Volume">
+        <div class="volume-up" role="button" aria-label="Maximum volume">
           <span class="material-symbols-rounded">volume_up</span>
         </div>
       </div>
 
     </div>
+    <div id="drop-hint" hidden>
+      <span class="material-symbols-rounded">library_music</span>
+      <p>Drop MP3 files to add them to the playlist</p>
+    </div>
   </div>
-    <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
-    <script src="js/jsmediatags.js"></script>
-    <!-- <script src="js/wavesufer.js"></script> -->
-    <script src="js/new_wavesufer.js"></script>
-    <script src="js/playlist.js"></script>
-    <script src="js/script.js"></script>
+  <div id="confirm-modal" hidden>
+    <div class="confirm-card">
+      <div class="confirm-icon">
+        <span class="material-symbols-rounded">delete_sweep</span>
+      </div>
+      <div id="confirm-title" class="confirm-title"></div>
+      <div id="confirm-message" class="confirm-message"></div>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="confirm-btn" type="button">Cancel</button>
+        <button id="confirm-ok" class="confirm-btn danger" type="button">Continue</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" hidden></div>
+  <script src="js/jsmediatags.js"></script>
+  <script src="js/wavesurfer-7.min.js"></script>
+  <script src="js/script.js"></script>
 </body>
 
 </html>
