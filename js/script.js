@@ -707,7 +707,9 @@
       if (savedPosition > 5 && wavesurfer.getDuration() - savedPosition > 10) {
         wavesurfer.setTime(savedPosition);
       }
-      wavesurfer.play();
+      // Autoplay is blocked until the first user interaction — the track just
+      // stays loaded and paused; playback starts on the first play click.
+      wavesurfer.play().catch(() => {});
       highlightPlaylist(index);
       if (!currentTrack.local) {
         saveSettings({ lastTrack: currentTrack.name });
@@ -1143,7 +1145,6 @@
           img.src = meta.artworkUrl;
           titleEl.textContent = meta.title;
           artistEl.textContent = meta.artist;
-          albumEl.textContent = meta.album;
           applySearchFilter();
         });
 
