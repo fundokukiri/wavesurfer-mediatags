@@ -45,24 +45,41 @@ const after = await page.evaluate(() => {
 const switched = after.name !== start;
 const seekKept = Math.abs(after.seconds - TARGET) <= 8;
 
-// The waveform shows the whole track, so a click at 75% of its width must land
-// at 75% of the song — the old 100px/s setting turned it into a 3-second window.
-const box = await page.locator("#waveform").boundingBox();
-await page.mouse.click(box.x + box.width * 0.75, box.y + box.height / 2);
-await page.waitForTimeout(600);
-const wave = await page.evaluate(() => ({
-  seconds: Number(document.querySelector("#track-seek-bar").value),
-  duration: Number(document.querySelector("#track-seek-bar").max),
-}));
-const wholeTrack = Math.abs(wave.seconds - wave.duration * 0.75) <= wave.duration * 0.05;
+// The waveform is a scrolling window on purpose; the only thing that matters
+// here is that it really moves while playing (it was made static once and the
+// owner asked for the old behaviour back).
+const readScroll = () =>
+  page.evaluate(() => {
+    const scroll = document
+      .querySelector("#waveform")
+      .firstElementChild?.shadowRoot?.querySelector(".scroll");
+    return scroll
+      ? {
+          left: Math.round(scroll.scrollLeft),
+          width: scroll.scrollWidth,
+          client: scroll.clientWidth,
+        }
+      : null;
+  });
+await page.evaluate(() => {
+  if (document.querySelector(".play-pause span").textContent === "play_arrow")
+    document.querySelector(".play-pause").click();
+});
+await page.waitForTimeout(400);
+const scrollA = await readScroll();
+await page.waitForTimeout(1500);
+const scrollB = await readScroll();
+const waveformMoves = Boolean(
+  scrollA && scrollB && scrollA.width > scrollA.client * 2 && scrollB.left !== scrollA.left
+);
 
 console.log(`${switched ? "PASS" : "FAIL"}  clicked track actually switches (${start} -> ${after.name})`);
 console.log(`${seekKept ? "PASS" : "FAIL"}  seek during load kept: ${after.seconds}s of ${after.duration}s (wanted ${TARGET}s)`);
 console.log(
-  `${wholeTrack ? "PASS" : "FAIL"}  waveform click at 75% seeks to 75%: ${Math.round(wave.seconds)}s of ${Math.round(wave.duration)}s`
+  `${waveformMoves ? "PASS" : "FAIL"}  waveform scrolls while playing: ${scrollA?.left}px -> ${scrollB?.left}px of ${scrollA?.width}px`
 );
 console.log(`${errors.length === 0 ? "PASS" : "FAIL"}  no page errors${errors.length ? `: ${errors.join(" | ")}` : ""}`);
 
 await browser.close();
 server.close();
-process.exit(switched && seekKept && wholeTrack && errors.length === 0 ? 0 : 1);
+process.exit(switched && seekKept && waveformMoves && errors.length === 0 ? 0 : 1);

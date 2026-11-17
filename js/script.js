@@ -128,11 +128,10 @@
     hideScrollbar: true,
     cursorWidth: 0,
     barRadius: 3,
-    // fitParent: the whole track fits the box, so one click anywhere seeks
-    // anywhere and there is no canvas to scroll (that scrolling is what used
-    // to jank touch devices).
-    minPxPerSec: 0,
-    fillParent: true,
+    // Touch devices render the canvas at 2-3x DPR and keep scrolling it while
+    // playing — a 22,000px waveform janks them. A coarse pointer gets a 4x
+    // smaller canvas; desktop keeps the high detail.
+    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 25 : 100,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
