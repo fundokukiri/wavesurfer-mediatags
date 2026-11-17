@@ -1550,7 +1550,7 @@
     const tooltipEl = document.querySelector("#track-tooltip");
     // Long enough that clicking a row never flashes a card; short enough that
     // a deliberate hover still feels immediate.
-    const HOVER_DELAY_MS = 1000;
+    const HOVER_DELAY_MS = 700;
     let hoveredRow = null;
     let pendingRow = null;
     let hoverTimer = 0;
