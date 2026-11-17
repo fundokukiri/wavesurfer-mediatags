@@ -25,7 +25,13 @@ copyFileSync(join(ROOT, "audio/Son Tung M-TP - Lạc Trôi.mp3"), join(folderA, 
 copyFileSync(join(ROOT, "audio/Son Tung M-TP - Buông Đôi Tay Nhau Ra.mp3"), join(folderA, "Alpha Two.mp3"));
 copyFileSync(join(ROOT, "audio/Son Tung M-TP - Khuôn Mặt Đáng Thương.mp3"), join(folderB, "Beta One.mp3"));
 
-const browser = await firefox.launch();
+// Autoplay allowed so a stray play() shows up as audio actually running.
+const browser = await firefox.launch({
+  firefoxUserPrefs: {
+    "media.autoplay.default": 0,
+    "media.autoplay.blocking_policy": 0,
+  },
+});
 const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -156,6 +162,35 @@ try {
     "clicking the chip again shows every song",
     (await visibleRows()) === baseline.rows + 3
   );
+  // Deleting a folder while one of its songs is loaded must not start
+  // anything else playing.
+  const lastIndex = (
+    await page.evaluate(() =>
+      [...document.querySelectorAll(".tbody-playlist")].map((row) =>
+        Number(row.dataset.index)
+      )
+    )
+  ).at(-1);
+  await page.locator(`.tbody-playlist[data-index="${lastIndex}"]`).click();
+  await page.waitForTimeout(1500);
+  // It is playing at this point: the removal must not carry that on.
+  const playingBefore = await page.evaluate(
+    () => document.querySelector(".play-pause span").textContent === "pause"
+  );
+  check("a folder song is playing before the unlink", playingBefore === true);
+  await page.evaluate(() => document.querySelector(".album-art img").click());
+  await page.waitForTimeout(450);
+  // Autoplay-blocked or not, a stray play() is what "it started playing"
+  // means here, so count the calls instead of trusting audio state.
+  await page.evaluate(() => {
+    window.__playCalls = 0;
+    const original = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...args) {
+      window.__playCalls += 1;
+      return original.apply(this, args);
+    };
+  });
+
   // Confirm modal needs two OK clicks.
   await page.locator(".folder-chip").nth(1).locator(".folder-chip-unlink").click();
   await page.waitForSelector("#confirm-modal:not([hidden])", { timeout: 5000 });
@@ -168,6 +203,15 @@ try {
   c = await getCounts();
   check("unlink folder B: only B's songs removed", c.rows === baseline.rows + 2);
   check("unlink folder B: folder A chip survives", c.chips === 1);
+  const afterUnlink = await page.evaluate(() => ({
+    icon: document.querySelector(".play-pause span").textContent,
+    playCalls: window.__playCalls,
+  }));
+  check(
+    "unlinking a folder does not start playback",
+    afterUnlink.playCalls === 0 && afterUnlink.icon === "play_arrow",
+    JSON.stringify(afterUnlink)
+  );
 
   // Persistence: a reload restores folder A (and only A) from IndexedDB.
   await page.reload();

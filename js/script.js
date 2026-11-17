@@ -17,6 +17,9 @@
   const seekBar = app.querySelector("#track-seek-bar");
   const playPauseBtn = app.querySelector(".play-pause");
   const playPauseBtnIcon = app.querySelector(".play-pause span");
+  // wavesurfer.isPlaying() reports true while the audio is paused, so the
+  // button icon is the source of truth for "is something running".
+  const audioPlaying = () => playPauseBtnIcon.textContent === "pause";
   const repeatBtn = app.querySelector(".repeat-btn");
   const repeatBtnIcon = app.querySelector(".repeat-btn span");
   const prevBtn = app.querySelector("#prev");
@@ -1830,7 +1833,6 @@
       if (!targets.length) return;
       const keys = new Set(targets.map((t) => t.id || t.path));
       const wasLoaded = keys.has(loadedKey);
-      const wasPlaying = wavesurfer.isPlaying();
       allTracks = allTracks.filter((t) => !keys.has(t.id || t.path));
       shuffledArray = shuffledArray.filter((t) => !keys.has(t.id || t.path));
       if (!shuffledArray.length) {
@@ -1853,11 +1855,10 @@
       renderPlaylist();
       updatePlaylistSubtitle();
       if (wasLoaded) {
-        // A paused player stays paused: hold the replacement through ready.
-        if (!wasPlaying) {
-          const next = shuffledArray[index];
-          pauseOnReadyKey = next.id || next.path;
-        }
+        // Removing songs never starts a new one: the replacement stays loaded
+        // and paused, whatever was playing before.
+        const next = shuffledArray[index];
+        pauseOnReadyKey = next.id || next.path;
         loadTrack(index);
       } else {
         highlightPlaylist(index);
@@ -2052,7 +2053,7 @@
       addTracks(tracks);
       linkFolder(handle.name, handle);
       // Resume the last folder track, but never yank active playback.
-      if (!wavesurfer.isPlaying()) restoreLastLocalTrack();
+      if (!audioPlaying()) restoreLastLocalTrack();
     };
 
     const showRestoreBannerForNext = () => {
@@ -2136,7 +2137,7 @@
       if (!item) return;
       const idx = Number(item.dataset.index);
       if (idx === index) {
-        if (wavesurfer.isPlaying()) wavesurfer.pause();
+        if (audioPlaying()) wavesurfer.pause();
         else wavesurfer.play();
       } else {
         loadTrack(idx);
