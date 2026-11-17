@@ -67,6 +67,15 @@ try {
   await page.waitForSelector(".tbody-playlist, .playlist-status", { timeout: 15000 });
   await page.waitForTimeout(2500); // boot restore settle (timers in app)
 
+  // Firefox keeps the scrolling waveform bounded: 20-30fps at full density.
+  const waveWidth = await page.evaluate(() => {
+    const scroll = document
+      .querySelector("#waveform")
+      .firstElementChild?.shadowRoot?.querySelector(".scroll");
+    return scroll ? scroll.scrollWidth : 0;
+  });
+  check(`firefox waveform stays bounded (${waveWidth}px)`, waveWidth > 0 && waveWidth <= 9001);
+
   const baseline = await getCounts();
   check(`boot: server playlist rendered (${baseline.rows} rows, 0 chips)`, baseline.rows > 0 && baseline.chips === 0);
 
