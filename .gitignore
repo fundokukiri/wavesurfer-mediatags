@@ -6,6 +6,11 @@ node_modules/
 Thumbs.db
 desktop.ini
 
+# FUSE/ntfs-3g leftovers: files that were replaced while still open get
+# renamed here by libfuse. They cannot be unlinked through the mount and
+# vanish when the volume is remounted.
+.fuse_hidden*
+
 # Logs
 *.log
 npm-debug.log*

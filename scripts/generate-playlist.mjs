@@ -16,8 +16,12 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const audioDir = join(root, "audio");
 
+// Must match AUDIO_EXT in js/script.js — the player filters the manifest with
+// the same set, so a format missing here is invisible in the playlist.
+const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|wav|flac)$/i;
+
 const fileNames = readdirSync(audioDir, { withFileTypes: true })
-  .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".mp3"))
+  .filter((e) => e.isFile() && AUDIO_EXT.test(e.name))
   .map((e) => e.name)
   .sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })

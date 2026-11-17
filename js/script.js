@@ -48,6 +48,9 @@
   const confirmMessage = document.querySelector("#confirm-message");
   const confirmOk = document.querySelector("#confirm-ok");
   const confirmCancel = document.querySelector("#confirm-cancel");
+  const filesChip = document.querySelector("#files-chip");
+  const filesChipName = document.querySelector("#files-chip-name");
+  const filesUnlinkBtn = document.querySelector("#files-unlink");
 
   // Two-step in-app confirmation — replaces the native confirm() popups.
   const confirmTwice = (title, message, okLabel) =>
@@ -81,8 +84,9 @@
       confirmOk.onclick = () => {
         step += 1;
         if (step === 1) {
-          confirmMessage.textContent = "Are you sure? This cannot be undone.";
-          confirmOk.textContent = "Yes, remove";
+          // Keep the caller's wording — the action is not always a removal.
+          confirmMessage.textContent = `${message} Are you sure?`;
+          confirmOk.textContent = okLabel;
         } else {
           close(true);
         }
@@ -107,6 +111,12 @@
   const DEFAULT_ARTWORK = "./assets/images/default-icon.jpg";
   const AUDIO_FOLDER = "audio/";
   const SETTINGS_KEY = "musicPlayer.settings";
+  const IS_FIREFOX = /firefox/i.test(navigator.userAgent);
+  // iOS/iPadOS (iPads report a Mac UA but keep touch points) ignore
+  // audio.volume — loudness is hardware-controlled there.
+  const IS_IOS =
+    /iP(hone|oad|od)/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
   const options = {
     container: "#waveform",
@@ -118,7 +128,10 @@
     hideScrollbar: true,
     cursorWidth: 0,
     barRadius: 3,
-    minPxPerSec: 100,
+    // Touch devices render the canvas at 2-3x DPR and keep scrolling it while
+    // playing — a 22,000px waveform janks them. A coarse pointer gets a 4x
+    // smaller canvas; desktop keeps the high detail.
+    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 25 : 100,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
@@ -140,6 +153,8 @@
   // audio/playlist.json manifest — regenerate it with
   // `node scripts/generate-playlist.mjs` after adding tracks.
   // ---------------------------------------------------------------------------
+  const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|wav|flac)$/i;
+
   const normalizeFileNames = (fileNames) =>
     [...new Set(fileNames)]
       .sort((a, b) =>
@@ -164,7 +179,7 @@
             return null;
           }
         })
-        .filter((name) => name && name.toLowerCase().endsWith(".mp3"))
+        .filter((name) => name && AUDIO_EXT.test(name))
     );
   };
 
@@ -180,7 +195,7 @@
     if (!Array.isArray(fileNames)) throw new Error("Malformed playlist.json");
     return normalizeFileNames(
       fileNames.filter(
-        (name) => typeof name === "string" && name.toLowerCase().endsWith(".mp3")
+        (name) => typeof name === "string" && AUDIO_EXT.test(name)
       )
     );
   };
@@ -259,48 +274,62 @@
     }
   };
 
-  const POSITIONS_KEY = "musicPlayer.positions";
+  // Only ONE resume point is kept: the track that was playing and how far it
+  // got. It exists so a reload continues where you left off — it is never
+  // applied when you deliberately switch to another track.
+  const POSITION_KEY = "musicPlayer.position";
 
-  const loadPositions = () => {
+  const loadPosition = () => {
     try {
-      const map = JSON.parse(localStorage.getItem(POSITIONS_KEY)) || {};
-      // Blob URLs die on reload; drop stale or useless entries.
-      for (const key of Object.keys(map)) {
-        if (key.startsWith("blob:") || typeof map[key] !== "number" || map[key] < 3) {
-          delete map[key];
-        }
+      const saved = JSON.parse(localStorage.getItem(POSITION_KEY));
+      if (
+        !saved ||
+        typeof saved !== "object" ||
+        typeof saved.key !== "string" ||
+        typeof saved.time !== "number" ||
+        !(saved.time > 5) ||
+        saved.key.startsWith("blob:")
+      ) {
+        return null;
       }
-      return map;
+      return saved;
     } catch {
-      return {};
+      return null;
     }
   };
 
-  const savePositions = (map) => {
+  const savePosition = (key, time) => {
     try {
-      const keys = Object.keys(map);
-      if (keys.length > 50) {
-        for (const key of keys.slice(0, keys.length - 50)) delete map[key];
-      }
-      localStorage.setItem(POSITIONS_KEY, JSON.stringify(map));
+      localStorage.setItem(POSITION_KEY, JSON.stringify({ key, time }));
     } catch {
-      // Storage unavailable — positions just won't persist.
+      // Storage unavailable — the resume point just won't persist.
     }
   };
-
-  const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|wav|flac)$/i;
 
   // ---------------------------------------------------------------------------
   // IndexedDB — persists local folder handles and individual audio files so
   // user-added music survives page reloads.
   // ---------------------------------------------------------------------------
+  // One shared connection instead of a fresh open per operation (a big
+  // folder pick used to open one connection PER FILE).
+  let idbDbPromise = null;
   const idbOpen = () =>
-    new Promise((resolve, reject) => {
+    (idbDbPromise ||= new Promise((resolve, reject) => {
       const req = indexedDB.open("musicPlayer", 1);
       req.onupgradeneeded = () => req.result.createObjectStore("local");
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onclose = () => {
+          idbDbPromise = null;
+        };
+        db.onversionchange = () => {
+          db.close();
+          idbDbPromise = null;
+        };
+        resolve(db);
+      };
       req.onerror = () => reject(req.error);
-    });
+    }));
 
   const idbSet = async (key, value) => {
     const db = await idbOpen();
@@ -360,6 +389,21 @@
       source: "file",
       id: `local:${file.name}:${file.size}`,
     }));
+
+  // Files persisted by the webkitdirectory fallback — keyed by their path
+  // inside the picked folder ("dirfile:<relativePath>:<size>").
+  const tracksFromDirFileEntries = (entries) =>
+    entries.map(({ key, value: file }) => {
+      const relPath = String(key).slice("dirfile:".length);
+      return {
+        name: relPath.split("/").pop().replace(/\.[^.]+$/, ""),
+        path: URL.createObjectURL(file),
+        file,
+        local: true,
+        source: "folder",
+        id: `local:${relPath}`,
+      };
+    });
 
   // Recursively read a picked directory handle (Chromium File System Access).
   const scanDirHandle = async (dirHandle, prefix = "", depth = 0) => {
@@ -444,6 +488,10 @@
       typeof settings.volume === "number"
         ? Math.min(Math.max(settings.volume, 0), 1)
         : 1;
+    // Mute is tracked here because media.load() resets the element's
+    // mutedness on EVERY track change (HTML spec: it re-reads the muted
+    // content attribute, which we never set) — the element flag alone lies.
+    let mutedState = Boolean(settings.muted);
     let shuffledArray = allTracks.slice();
     const favoriteKeys = Array.isArray(settings.favorites)
       ? settings.favorites.filter((key) => !key.startsWith("blob:"))
@@ -452,7 +500,8 @@
     if (favoriteKeys.length !== (settings.favorites || []).length) {
       saveSettings({ favorites: favoriteKeys });
     }
-    let favOnly = Boolean(settings.favOnly);
+    // Session-only — reload always returns to the full playlist.
+    let favOnly = false;
     const excludedTracks = new Set(
       Array.isArray(settings.excludedTracks) ? settings.excludedTracks : []
     );
@@ -460,13 +509,15 @@
     // racing a fast reload, which would otherwise bring the track back.
     const removedFileKeys = new Set(
       Array.isArray(settings.removedFileKeys)
-        ? settings.removedFileKeys.filter((key) => /^file:.+:\d+$/.test(key))
+        ? settings.removedFileKeys.filter((key) =>
+            /^(?:dir)?file:.+:\d+$/.test(key)
+          )
         : []
     );
-    let linkedFolderHandle = null;
-    const positions = loadPositions();
-    let lastPositionSave = 0;
-    let loadedKey = null; // favorites/positions key of the loaded media
+    // Resume point restored from the last session, consumed exactly once.
+    const resumePoint = loadPosition();
+    let resumeKey = resumePoint?.key || null;
+    let loadedKey = null; // favorites/resume key of the loaded media
 
     const wavesurfer = WaveSurfer.create(options);
 
@@ -513,12 +564,17 @@
       };
     };
 
+    // Embedded artwork → blob URL. The tag's declared mime type comes from
+    // the audio FILE, so only known image types are accepted (it feeds CSS
+    // and mediaSession).
+    const ARTWORK_TYPE = /^(image\/(?:jpeg|png|webp|gif|bmp))$/i;
     const pictureToUrl = (picture) => {
       if (!picture || !picture.data || !picture.data.length) return null;
       const bytes = new Uint8Array(picture.data);
-      return URL.createObjectURL(
-        new Blob([bytes], { type: picture.format || "image/jpeg" })
-      );
+      const type = ARTWORK_TYPE.test(picture.format)
+        ? picture.format
+        : "image/jpeg";
+      return { url: URL.createObjectURL(new Blob([bytes], { type })), type };
     };
 
     const getTrackMeta = (i) => {
@@ -529,11 +585,13 @@
         jsmediatags.read(track.file || resolveTrackUrl(track), {
           onSuccess: (tag) => {
             const tags = tag.tags || {};
+            const pic = pictureToUrl(tags.picture);
             const meta = {
               title: tags.title || fallback.title,
               artist: tags.artist || fallback.artist,
               album: tags.album || fallback.album,
-              artworkUrl: pictureToUrl(tags.picture) || DEFAULT_ARTWORK,
+              artworkUrl: pic?.url || DEFAULT_ARTWORK,
+              artworkType: pic?.type || "image/jpeg",
             };
             metaCache[track.path] = meta;
             resolve(meta);
@@ -553,7 +611,10 @@
     };
 
     const applyTrackMetadata = (i) => {
+      const track = shuffledArray[i];
+      const key = track.id || track.path;
       getTrackMeta(i).then((meta) => {
+        if (key !== loadedKey) return; // another track started meanwhile
         trackArt.src = meta.artworkUrl;
         bgArtwork.style.backgroundImage = `url('${meta.artworkUrl}')`;
         trackName.textContent = meta.title;
@@ -565,6 +626,11 @@
             title: meta.title,
             artist: meta.artist,
             album: meta.album,
+            // Embedded art shows on the lock screen / OS media controls.
+            artwork:
+              meta.artworkUrl === DEFAULT_ARTWORK
+                ? []
+                : [{ src: meta.artworkUrl, type: meta.artworkType }],
           });
         }
       });
@@ -582,7 +648,12 @@
     };
 
     if (isShuffle) shuffledArray = shuffleArray(allTracks.slice());
-    if (typeof settings.lastTrack === "string") {
+    if (typeof settings.lastTrackKey === "string") {
+      const savedIndex = shuffledArray.findIndex(
+        (track) => (track.id || track.path) === settings.lastTrackKey
+      );
+      if (savedIndex !== -1) index = savedIndex;
+    } else if (typeof settings.lastTrack === "string") {
       const savedIndex = shuffledArray.findIndex(
         (track) => track.name === settings.lastTrack
       );
@@ -620,21 +691,35 @@
       }
     };
 
+    // Mute is its own persisted flag — it never destroys the volume level,
+    // so un-muting restores exactly what was playing before. On iOS the
+    // muted flag is the ONLY sound control a web page gets (media.volume is
+    // ignored there).
+    const applyMutedUi = () => {
+      muteBtnIcon.textContent =
+        mutedState || currentVolume === 0 ? "no_sound" : "volume_down";
+    };
+
+    let volumeSaveTimer = null;
     const applyVolume = (volume) => {
       wavesurfer.setVolume(volume);
       volumeSlider.value = Math.round(volume * 100);
-      muteBtnIcon.textContent = volume === 0 ? "no_sound" : "volume_down";
       currentVolume = volume;
-      saveSettings({ volume });
+      applyMutedUi();
+      // Slider drags fire this dozens of times — debounce the localStorage write.
+      clearTimeout(volumeSaveTimer);
+      volumeSaveTimer = setTimeout(() => saveSettings({ volume }), 300);
     };
 
     const toggleMute = () => {
-      if (wavesurfer.getVolume() > 0) {
-        currentVolume = wavesurfer.getVolume(); // remember pre-mute level
-        applyVolume(0);
+      if (!mutedState && wavesurfer.getVolume() > 0) {
+        mutedState = true;
       } else {
-        applyVolume(currentVolume === 0 ? 0.3 : currentVolume);
+        mutedState = false;
       }
+      wavesurfer.setMuted(mutedState);
+      applyMutedUi();
+      saveSettings({ muted: mutedState });
     };
 
     const seekBy = (seconds) => {
@@ -648,21 +733,80 @@
       updatePositionState();
     };
 
+    // Startup loading: when the last-played track is a LOCAL one, the async
+    // restore below loads it — loading the server track first too would just
+    // double the time until music is ready.
+    let initialLoadDone = false;
+    let hadSuccessfulReady = false;
+    let pendingLoads = 0;
+    // Serialize wavesurfer loads: overlapping load() calls race (fetch →
+    // setSrc → decode → ready) and whichever finishes LAST owns media.src —
+    // the audio would then mismatch the UI. Chaining guarantees the LAST
+    // requested track is the one that actually plays.
+    let loadChain = Promise.resolve();
+    // End-of-playlist stop: the key of the track that must stay paused after
+    // its load (the ready handler checks it instead of a bare once("ready"),
+    // which raced play() and could pause an unrelated track).
+    let pauseOnReadyKey = null;
+    // A seek made while the next track is still loading would land on the
+    // outgoing media — keep it and apply it once the new track is ready.
+    let pendingSeek = null;
     const loadTrack = (i) => {
+      pendingSeek = null;
+      initialLoadDone = true;
+      pendingLoads++;
       index = i;
-      wavesurfer.load(resolveTrackUrl(shuffledArray[index]));
       highlightPlaylist(index);
+      const track = shuffledArray[index];
+      // Fresh blob per load: wavesurfer revokes its previous media src, so a
+      // long-lived per-track URL would be dead by the time the user cycles
+      // back to this track.
+      const url = track.file
+        ? URL.createObjectURL(track.file)
+        : resolveTrackUrl(track);
+      loadChain = loadChain
+        .then(() => wavesurfer.load(url))
+        .finally(() => {
+          pendingLoads--;
+          if (track.file) URL.revokeObjectURL(url);
+        })
+        .catch((err) => console.error("Track load failed:", err));
     };
 
     const goToNextTrack = () => loadTrack((index + 1) % shuffledArray.length);
     const goToPrevTrack = () =>
       loadTrack((index - 1 + shuffledArray.length) % shuffledArray.length);
 
+    // Local (folder/file) tracks are added asynchronously after startup, so
+    // restoring the last-played one has to wait until they exist.
+    let lastTrackRestored = false;
+    const restoreLastLocalTrack = () => {
+      const savedKey = settings.lastTrackKey;
+      if (
+        lastTrackRestored ||
+        typeof savedKey !== "string" ||
+        !savedKey.startsWith("local:")
+      )
+        return;
+      const savedIndex = shuffledArray.findIndex(
+        (track) => track.id === savedKey
+      );
+      if (savedIndex === -1) return;
+      lastTrackRestored = true;
+      loadTrack(savedIndex);
+    };
+
+    const loadInitial = () => {
+      // A queued/running load covers the initial track; retry the server
+      // track only when every earlier load already FAILED (never ready).
+      if (initialLoadDone && (pendingLoads > 0 || hadSuccessfulReady)) return;
+      initialLoadDone = true;
+      loadTrack(index);
+    };
+
     // ---------------------------------------------------------------------------
     // Audio events
     // ---------------------------------------------------------------------------
-    wavesurfer.load(resolveTrackUrl(shuffledArray[index]));
-    applyVolume(currentVolume);
 
     wavesurfer.on("pause", () => {
       playPauseBtnIcon.textContent = "play_arrow";
@@ -673,8 +817,7 @@
       // Key by loadedKey: when switching tracks, load() pauses the OLD media
       // while index already points at the new one.
       if (loadedKey && !loadedKey.startsWith("blob:") && wavesurfer.getDuration()) {
-        positions[loadedKey] = wavesurfer.getCurrentTime();
-        savePositions(positions);
+        savePosition(loadedKey, wavesurfer.getCurrentTime());
       }
       document
         .querySelector(".tbody-playlist.active")
@@ -700,21 +843,73 @@
       currentTime.textContent = formatTime(0);
       remainingTime.textContent = `-${formatTime(wavesurfer.getDuration())}`;
       seekBar.max = Math.floor(wavesurfer.getDuration());
-      // Resume where the track was last left off.
+      // Continue where the last session left off — but only for the very
+      // track that was playing when the page closed, and only on the first
+      // load. Switching tracks always starts them at 0:00.
       const currentTrack = shuffledArray[index];
       const currentKey = currentTrack.id || currentTrack.path;
-      const savedPosition = positions[currentKey];
-      if (savedPosition > 5 && wavesurfer.getDuration() - savedPosition > 10) {
-        wavesurfer.setTime(savedPosition);
+      const shouldResume = resumeKey !== null && currentKey === resumeKey;
+      // Consumed once: later loads of the same track start from the top.
+      if (shouldResume) resumeKey = null;
+      if (pendingSeek !== null) {
+        wavesurfer.setTime(
+          Math.min(Math.max(pendingSeek, 0), wavesurfer.getDuration())
+        );
+        pendingSeek = null;
+      } else if (
+        shouldResume &&
+        !mutedState &&
+        resumePoint.time > 5 &&
+        wavesurfer.getDuration() - resumePoint.time > 10
+      ) {
+        wavesurfer.setTime(resumePoint.time);
       }
       // Autoplay is blocked until the first user interaction — the track just
       // stays loaded and paused; playback starts on the first play click.
-      wavesurfer.play().catch(() => {});
-      highlightPlaylist(index);
-      if (!currentTrack.local) {
-        saveSettings({ lastTrack: currentTrack.name });
+      // Resource selection resets mutedness to the (absent) muted content
+      // attribute on EVERY load — re-assert the user's mute each time.
+      wavesurfer.setMuted(mutedState);
+      if (pauseOnReadyKey === currentKey) {
+        // End of playlist: stay loaded and paused, don't restart track 1.
+        pauseOnReadyKey = null;
+        currentTime.textContent = formatTime(wavesurfer.getCurrentTime());
+        remainingTime.textContent = `-${formatTime(wavesurfer.getDuration())}`;
+      } else if (mutedState) {
+        // Muted sessions never run on by themselves: when the current track
+        // ends, stay paused at the next one. A tap plays it silently from 0.
+        playPauseBtnIcon.textContent = "play_arrow";
+        if ("mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "paused";
+        }
+      } else {
+        wavesurfer.play().catch(() => {
+          // The "play" event already flipped the button to "pause" — restore it.
+          playPauseBtnIcon.textContent = "play_arrow";
+          if ("mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "paused";
+          }
+        });
       }
+      highlightPlaylist(index);
+      // lastTrackKey is stable across reloads for both scanned tracks (their
+      // audio/ path) and local tracks (their id); "lastTrack" name remains
+      // for settings saved by older versions.
+      saveSettings(
+        currentTrack.local
+          ? { lastTrackKey: currentKey }
+          : { lastTrack: currentTrack.name, lastTrackKey: currentKey }
+      );
       updatePositionState();
+      // Firefox rasterizes the canvas stacks much slower than Chrome, and
+      // renderProgress re-clips them EVERY frame — a full-length waveform
+      // tanks its FPS. Cap the total width (~3 screens); Chrome keeps the
+      // full-detail render.
+      if (IS_FIREFOX && wavesurfer.getDuration() > 0) {
+        const cap = Math.max(window.innerWidth * 3, 2400);
+        const pxPerSec = cap / wavesurfer.getDuration();
+        if (pxPerSec < options.minPxPerSec) wavesurfer.zoom(pxPerSec);
+      }
+      hadSuccessfulReady = true;
       loadedKey = currentKey;
     });
 
@@ -726,23 +921,18 @@
       remainingTime.textContent = `-${formatTime(
         wavesurfer.getDuration() - current
       )}`;
-      // Local files have blob: paths that die on reload — skip them.
-      if (loadedKey && !loadedKey.startsWith("blob:")) {
-        const now = Date.now();
-        if (now - lastPositionSave > 3000) {
-          lastPositionSave = now;
-          positions[loadedKey] = current;
-          savePositions(positions);
-        }
-      }
     });
 
     seekBar.addEventListener("input", () => {
-      const duration = wavesurfer.getDuration();
-      if (duration > 0) {
-        wavesurfer.seekTo(seekBar.value / duration);
-        updatePositionState();
+      const value = Number(seekBar.value);
+      // No loaded media yet (or a load in flight): the duration belongs to
+      // another track, so remember the target for the ready handler.
+      if (pendingLoads > 0 || !wavesurfer.getDuration()) {
+        pendingSeek = value;
+        return;
       }
+      wavesurfer.seekTo(value / wavesurfer.getDuration());
+      updatePositionState();
     });
 
     wavesurfer.on("error", (e) => {
@@ -781,6 +971,13 @@
     });
 
     wavesurfer.on("finish", () => {
+      // A one-song playlist reloading itself would re-decode the same file
+      // forever — just rewind in place instead.
+      if (shuffledArray.length < 2) {
+        wavesurfer.seekTo(0);
+        if (isRepeat === 2) wavesurfer.play();
+        return;
+      }
       if (isRepeat === 1) {
         goToNextTrack();
       } else if (isRepeat === 2) {
@@ -788,23 +985,26 @@
         wavesurfer.play();
       } else {
         const next = (index + 1) % shuffledArray.length;
-        loadTrack(next);
         if (next === 0) {
-          // End of playlist: load the first track but stay paused.
-          wavesurfer.once("ready", () => {
-            wavesurfer.pause();
-            currentTime.textContent = formatTime(0);
-            remainingTime.textContent = `-${formatTime(
-              wavesurfer.getDuration()
-            )}`;
-          });
+          // End of playlist: load the first track but keep it paused — the
+          // ready handler skips play() for exactly this track.
+          pauseOnReadyKey = shuffledArray[next].id || shuffledArray[next].path;
         }
+        loadTrack(next);
       }
     });
 
     muteBtn.onclick = toggleMute;
 
-    volumeUpBtn.onclick = () => applyVolume(1);
+    volumeUpBtn.onclick = () => {
+      // Max volume also clears mute — otherwise it would stay silent.
+      if (mutedState) {
+        mutedState = false;
+        saveSettings({ muted: false });
+        wavesurfer.setMuted(false);
+      }
+      applyVolume(1);
+    };
 
     volumeSlider.addEventListener("input", () =>
       applyVolume(Number(volumeSlider.value) / 100)
@@ -830,7 +1030,6 @@
     favToggle.onclick = () => {
       favOnly = !favOnly;
       favToggle.classList.toggle("fav-active", favOnly);
-      saveSettings({ favOnly });
       renderPlaylist();
     };
 
@@ -878,15 +1077,30 @@
       const files = [...folderFallback.files].filter((file) =>
         AUDIO_EXT.test(file.name)
       );
+      files.forEach((file) => {
+        const key = `dirfile:${file.webkitRelativePath || file.name}:${file.size}`;
+        // Re-picking a cleared folder lifts its tombstones.
+        if (removedFileKeys.delete(key)) {
+          saveSettings({ removedFileKeys: [...removedFileKeys] });
+        }
+        // No directory handle on this browser (Firefox, Android, iOS) —
+        // persist each file so the folder survives reloads.
+        idbSet(key, file).catch(() => {});
+      });
       addTracks(
         files.map((file) => ({
           name: file.name.replace(/\.[^.]+$/, ""),
           path: URL.createObjectURL(file),
           file,
           local: true,
+          source: "folder",
           id: `local:${file.webkitRelativePath || file.name}:${file.size}`,
         }))
       );
+      if (files.length) {
+        const relPath = files[0].webkitRelativePath || files[0].name;
+        showFolderChipName(relPath.split("/")[0]);
+      }
       folderFallback.value = "";
     };
 
@@ -933,11 +1147,15 @@
     shuffleBtn.onclick = () => {
       isShuffle = !isShuffle;
       shuffleBtnIcon.style.color = isShuffle ? "#4676f9" : "#4d4d4d";
-      const currentName = shuffledArray[index].name;
+      // Relocate the current track by its stable key — duplicate file names
+      // (same song from two folders) would otherwise land on the wrong one.
+      const currentKey = shuffledArray[index].id || shuffledArray[index].path;
       shuffledArray = isShuffle
         ? shuffleArray(shuffledArray.slice())
         : allTracks.slice();
-      index = shuffledArray.findIndex((track) => track.name === currentName);
+      index = shuffledArray.findIndex(
+        (track) => (track.id || track.path) === currentKey
+      );
       saveSettings({ shuffle: isShuffle });
       renderPlaylist();
       highlightPlaylist(index);
@@ -998,6 +1216,7 @@
 
     const applySearchFilter = () => {
       const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+      let visible = 0;
       document.querySelectorAll(".tbody-playlist").forEach((row) => {
         const track = shuffledArray[Number(row.dataset.index)];
         const info = row.querySelector(".tp-info");
@@ -1006,7 +1225,18 @@
           (info?.textContent || "").toLowerCase().includes(query);
         const matchesFavorites = !favOnly || favorites.has(track?.id || track?.path);
         row.hidden = !matchesQuery || !matchesFavorites;
+        if (!row.hidden) visible++;
       });
+      // A fully filtered list must explain itself — a blank area looks broken.
+      const emptyHint = document.querySelector("#playlist-empty");
+      if (emptyHint) {
+        emptyHint.textContent = favOnly
+          ? query
+            ? "No favorites match your search."
+            : "No favorites yet — tap the heart on a song to pin it here."
+          : "No songs match your search.";
+        emptyHint.hidden = visible > 0;
+      }
     };
     searchInput?.addEventListener("input", applySearchFilter);
 
@@ -1132,6 +1362,15 @@
               // Keep it out of future rescans of the linked folder.
               excludedTracks.add(favKey);
               saveSettings({ excludedTracks: [...excludedTracks] });
+              // Fallback picks persist per file — tombstone them too so the
+              // track stays removed (handle-linked tracks have no such
+              // entries, so this is a harmless no-op for them).
+              const key = `dirfile:${(item.id || "").slice("local:".length)}`;
+              if (/^(?:dir)?file:.+:\d+$/.test(key)) {
+                removedFileKeys.add(key);
+                saveSettings({ removedFileKeys: [...removedFileKeys] });
+                idbDel(key).catch(() => {});
+              }
             }
             removeTracks([item]);
           };
@@ -1155,6 +1394,12 @@
             Number.isFinite(seconds) && seconds > 0 ? formatTime(seconds) : "--:--";
         });
       });
+      updateFilesChip();
+      const emptyHint = document.createElement("div");
+      emptyHint.id = "playlist-empty";
+      emptyHint.className = "playlist-status";
+      emptyHint.hidden = true;
+      tbody.append(emptyHint);
       applySearchFilter();
     };
 
@@ -1225,9 +1470,20 @@
         "Continue"
       );
       if (!ok) return;
-      // The folder stays linked — exclusions keep these songs out of rescans.
-      folderTracks.forEach((t) => excludedTracks.add(t.id));
-      saveSettings({ excludedTracks: [...excludedTracks] });
+      // The folder stays linked — exclusions keep these songs out of rescans;
+      // tombstones keep fallback-persisted files out of the IDB restore.
+      folderTracks.forEach((t) => {
+        excludedTracks.add(t.id);
+        const key = `dirfile:${(t.id || "").slice("local:".length)}`;
+        if (/^(?:dir)?file:.+:\d+$/.test(key)) {
+          removedFileKeys.add(key);
+          idbDel(key).catch(() => {});
+        }
+      });
+      saveSettings({
+        excludedTracks: [...excludedTracks],
+        removedFileKeys: [...removedFileKeys],
+      });
       removeTracks(folderTracks);
       showToast(`Removed ${folderTracks.length} songs`);
     };
@@ -1260,22 +1516,23 @@
     attachLongPress(addTracksBtn, clearFileTracksFlow);
     attachLongPress(folderBtn, clearFolderTracksFlow);
 
-    // Remove tracks (and their favorite/position data) from the playlist.
+    // Visible delete-all chip for added files (mirrors the folder chip).
+    const updateFilesChip = () => {
+      if (!filesChip) return;
+      const n = allTracks.filter((t) => t.source === "file").length;
+      filesChipName.textContent = `${n} added ${n === 1 ? "song" : "songs"}`;
+      filesChip.hidden = n === 0;
+    };
+    filesUnlinkBtn?.addEventListener("click", () => clearFileTracksFlow());
+
+    // Remove tracks from the playlist. Favorites are keyed by stable ids, so
+    // they stay: re-adding the same folder/file restores the hearts.
     const removeTracks = (targets) => {
       if (!targets.length) return;
       const keys = new Set(targets.map((t) => t.id || t.path));
       const wasPlaying = keys.has(loadedKey);
-      targets.forEach((t) => URL.revokeObjectURL(t.path));
       allTracks = allTracks.filter((t) => !keys.has(t.id || t.path));
       shuffledArray = shuffledArray.filter((t) => !keys.has(t.id || t.path));
-      targets.forEach((t) => {
-        const key = t.id || t.path;
-        if (favorites.delete(key)) saveSettings({ favorites: [...favorites] });
-        if (positions[key] !== undefined) {
-          delete positions[key];
-          savePositions(positions);
-        }
-      });
       if (!shuffledArray.length) {
         wavesurfer.stop();
         loadedKey = null;
@@ -1284,7 +1541,15 @@
         updatePlaylistSubtitle();
         return;
       }
-      index = Math.min(index, shuffledArray.length - 1);
+      // Filtering shifts every row before the playing one — recompute the
+      // index from its key instead of clamping the now-stale one.
+      const currentIndex = shuffledArray.findIndex(
+        (t) => (t.id || t.path) === loadedKey
+      );
+      index =
+        currentIndex !== -1
+          ? currentIndex
+          : Math.min(index, shuffledArray.length - 1);
       renderPlaylist();
       updatePlaylistSubtitle();
       if (wasPlaying) {
@@ -1295,21 +1560,47 @@
     };
 
     const showFolderChip = (handle) => {
-      linkedFolderHandle = handle;
       if (folderChipName) folderChipName.textContent = handle.name;
+      if (folderChip) folderChip.hidden = false;
+    };
+
+    // Fallback picks have no handle — the chip still shows the folder name.
+    const showFolderChipName = (name) => {
+      if (folderChipName) folderChipName.textContent = name;
       if (folderChip) folderChip.hidden = false;
     };
 
     // Unlink the connected folder: drop the handle, remove all of its tracks
     // and clear per-track exclusions (they only mattered for that folder).
+    // Works without a handle too — fallback-persisted folder files get
+    // tombstoned so they stay unlinked after a reload.
     folderUnlinkBtn.onclick = async () => {
-      if (!linkedFolderHandle) return;
+      const folderTracks = allTracks.filter((t) => t.source === "folder");
+      // Same two-step confirmation as clearing added files.
+      const ok = await confirmTwice(
+        "Unlink music folder?",
+        folderTracks.length
+          ? `This will remove ${folderTracks.length} songs from the linked folder and forget it.`
+          : "This will forget the connected folder.",
+        "Continue"
+      );
+      if (!ok) return;
+      // Drop the handle even when its permission was never granted (banner
+      // pending) — otherwise the banner keeps offering a removed folder.
       await idbDel("dirHandle").catch(() => {});
       saveSettings({ excludedTracks: [] });
       excludedTracks.clear();
-      removeTracks(allTracks.filter((t) => t.source === "folder"));
+      if (restoreBanner) restoreBanner.hidden = true;
+      folderTracks.forEach((t) => {
+        const key = `dirfile:${(t.id || "").slice("local:".length)}`;
+        if (/^(?:dir)?file:.+:\d+$/.test(key)) {
+          removedFileKeys.add(key);
+          idbDel(key).catch(() => {});
+        }
+      });
+      saveSettings({ removedFileKeys: [...removedFileKeys] });
+      removeTracks(folderTracks);
       if (folderChip) folderChip.hidden = true;
-      linkedFolderHandle = null;
     };
 
     // Bound once here — renderPlaylist() re-runs on every shuffle toggle.
@@ -1327,6 +1618,40 @@
       }
     });
 
+    // Initial load — skipped when the last-played track is a local one (the
+    // restore below loads it instead); the timeout covers a slow/failed
+    // restore so the player is never left empty.
+    if (
+      typeof settings.lastTrackKey === "string" &&
+      settings.lastTrackKey.startsWith("local:")
+    ) {
+      setTimeout(loadInitial, 1500);
+    } else {
+      loadInitial();
+    }
+    applyVolume(currentVolume);
+    // Restore the remembered mute state. Safe on iOS: the ready handler
+    // refuses to auto-play while muted, so nothing runs on by itself.
+    if (mutedState) {
+      wavesurfer.setMuted(true);
+      applyMutedUi();
+    }
+
+    // iOS: NO web page can change volume — the hardware buttons own it. Hide
+    // the controls instead of showing ones that can't work, and force-clear
+    // any stale stored mute: a muted iOS player would be silent with no
+    // visible way back.
+    const volumeGroup = app.querySelector(".volume-control-btn");
+    if (IS_IOS && volumeGroup) {
+      volumeGroup.style.display = "none";
+      if (mutedState) {
+        mutedState = false;
+        wavesurfer.setMuted(false);
+        saveSettings({ muted: false });
+      }
+      showToast("On iOS, use the device's volume buttons");
+    }
+
     renderPlaylist();
 
     // Restore user-added local music from a previous session.
@@ -1336,6 +1661,16 @@
           (entry) => !removedFileKeys.has(String(entry.key))
         );
         addTracks(tracksFromFiles(stored.map((entry) => entry.value)));
+        restoreLastLocalTrack();
+        const dirStored = (await idbGetByPrefix("dirfile:")).filter(
+          (entry) => !removedFileKeys.has(String(entry.key))
+        );
+        addTracks(tracksFromDirFileEntries(dirStored));
+        if (dirStored.length) {
+          const relPath = String(dirStored[0].key).slice("dirfile:".length);
+          showFolderChipName(relPath.split("/")[0]);
+        }
+        restoreLastLocalTrack();
         const handle = await idbGet("dirHandle");
         if (handle) {
           const permission = await handle.queryPermission({ mode: "read" });
@@ -1345,6 +1680,7 @@
             );
             addTracks(tracks);
             showFolderChip(handle);
+            restoreLastLocalTrack();
           } else if (restoreBanner) {
             restoreName.textContent = handle.name;
             restoreBanner.hidden = false;
@@ -1353,22 +1689,33 @@
                 (await handle.requestPermission({ mode: "read" })) === "granted"
               ) {
                 restoreBanner.hidden = true;
-                addTracks(await scanDirHandle(handle));
+                const tracks = (await scanDirHandle(handle)).filter(
+                  (t) => !excludedTracks.has(t.id)
+                );
+                addTracks(tracks);
+                showFolderChip(handle);
+                // Resume the last folder track, but never yank active playback.
+                if (!wavesurfer.isPlaying()) restoreLastLocalTrack();
               }
             };
           }
         }
       } catch {
         // IndexedDB unavailable — local music stays session-only.
+      } finally {
+        // Restore settled and loaded nothing → load the initial server track.
+        loadInitial();
       }
     })();
 
     // Persist the current track position when the page is being closed.
-    window.addEventListener("beforeunload", () => {
+    // pagehide fires where beforeunload doesn't (mobile Safari/Chrome).
+    const savePositionNow = () => {
       if (loadedKey && !loadedKey.startsWith("blob:") && wavesurfer.getDuration()) {
-        positions[loadedKey] = wavesurfer.getCurrentTime();
-        savePositions(positions);
+        savePosition(loadedKey, wavesurfer.getCurrentTime());
       }
-    });
+    };
+    window.addEventListener("beforeunload", savePositionNow);
+    window.addEventListener("pagehide", savePositionNow);
   });
 })();

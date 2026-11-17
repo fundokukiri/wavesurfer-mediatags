@@ -1,0 +1,12 @@
+{
+  "name": "wavesurfer-mediatags",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/playlist.test.mjs",
+    "test:browser": "node test/browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  }
+}
