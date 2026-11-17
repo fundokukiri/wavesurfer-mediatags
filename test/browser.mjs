@@ -73,13 +73,36 @@ const waveformMoves = Boolean(
   scrollA && scrollB && scrollA.width > scrollA.client * 2 && scrollB.left !== scrollA.left
 );
 
+// Toggling the favourites filter re-renders the list: the row of the song that
+// is playing must keep its playing marker.
+const playingMarked = await page.evaluate(() => {
+  const count = () =>
+    document.querySelectorAll(".tbody-playlist.active.playing").length;
+  const before = count();
+  document.querySelector("#fav-toggle").click();
+  const afterFav = count();
+  document.querySelector("#fav-toggle").click();
+  return { before, afterFav, afterBack: count() };
+});
+const playingKept =
+  playingMarked.before === 1 &&
+  playingMarked.afterFav === 1 &&
+  playingMarked.afterBack === 1;
+
 console.log(`${switched ? "PASS" : "FAIL"}  clicked track actually switches (${start} -> ${after.name})`);
 console.log(`${seekKept ? "PASS" : "FAIL"}  seek during load kept: ${after.seconds}s of ${after.duration}s (wanted ${TARGET}s)`);
 console.log(
   `${waveformMoves ? "PASS" : "FAIL"}  waveform scrolls while playing: ${scrollA?.left}px -> ${scrollB?.left}px of ${scrollA?.width}px`
 );
+console.log(
+  `${playingKept ? "PASS" : "FAIL"}  the playing row survives a re-render: ${JSON.stringify(playingMarked)}`
+);
 console.log(`${errors.length === 0 ? "PASS" : "FAIL"}  no page errors${errors.length ? `: ${errors.join(" | ")}` : ""}`);
 
 await browser.close();
 server.close();
-process.exit(switched && seekKept && waveformMoves && errors.length === 0 ? 0 : 1);
+process.exit(
+  switched && seekKept && waveformMoves && playingKept && errors.length === 0
+    ? 0
+    : 1
+);

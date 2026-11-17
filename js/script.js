@@ -1355,6 +1355,19 @@
     // ---------------------------------------------------------------------------
     // Playlist
     // ---------------------------------------------------------------------------
+    // Re-rendering replaces every row, so the loaded one has to be marked
+    // again — otherwise the list shows nothing playing while audio runs on.
+    const markLoadedRow = () => {
+      document.querySelectorAll(".tbody-playlist").forEach((row) => {
+        const track = shuffledArray[Number(row.dataset.index)];
+        const isLoaded = Boolean(
+          loadedKey && track && (track.id || track.path) === loadedKey
+        );
+        row.classList.toggle("active", isLoaded);
+        row.classList.toggle("playing", isLoaded && audioPlaying());
+      });
+    };
+
     const highlightPlaylist = (i) => {
       document.querySelectorAll(".tbody-playlist").forEach((el, idx) => {
         el.classList.toggle("active", idx === i);
@@ -1552,6 +1565,7 @@
       emptyHint.hidden = true;
       tbody.append(emptyHint);
       applySearchFilter();
+      markLoadedRow();
     };
 
     // The row truncates with an ellipsis, so hover shows the whole record.
