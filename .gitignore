@@ -26,3 +26,23 @@ graphify-out/
 # Music and its generated playlist stay local — the tracks are not ours to
 # redistribute, so they never enter the repo.
 audio/*.mp3
+
+# Scratch files from debugging: never part of the app.
+test/_*.mjs
+shots/
+/images/
+*.bak
+*.orig
+*.rej
+*.tmp
+*.bundle
+
+# Editor and tooling leftovers
+.vscode/
+.idea/
+playwright-report/
+test-results/
+.playwright/
+
+# A stray copy of the vendored player must not shadow js/wavesurfer-7.min.js.
+/wavesurfer-7.min.js
