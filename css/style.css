@@ -399,10 +399,6 @@ body {
     inset -2px -2px 5px rgba(255, 255, 255, 0.9);
 }
 
-.head-btn.accent {
-  color: #4676f9;
-}
-
 /* Favorites filter button — heart fills when the filter is on. */
 #fav-toggle .material-symbols-rounded {
   font-variation-settings: "FILL" 0;
@@ -446,6 +442,12 @@ body {
 
 .head-btn .material-symbols-rounded {
   font-size: 22px;
+}
+
+/* The magnifier glyph sits optically smaller than its siblings at the same
+   size, so it gets a little more. */
+#search-toggle .material-symbols-rounded {
+  font-size: 24px;
 }
 
 .head-center {
