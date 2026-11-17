@@ -9,7 +9,7 @@
 //
 // On a local dev server with directory indexes the manifest is ignored — the
 // folder is scanned live, so nothing to re-run there.
-import { readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,8 +20,20 @@ const audioDir = join(root, "audio");
 // the same set, so a format missing here is invisible in the playlist.
 const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|wav|flac)$/i;
 
+// Files named in audio/.local-only stay out of the manifest: they are on disk
+// for local listening but not ours to publish, so a static deploy must not
+// list them (a listed track that 404s is a dead row in the player).
+const localOnly = new Set(
+  existsSync(join(audioDir, ".local-only"))
+    ? readFileSync(join(audioDir, ".local-only"), "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+    : []
+);
+
 const fileNames = readdirSync(audioDir, { withFileTypes: true })
-  .filter((e) => e.isFile() && AUDIO_EXT.test(e.name))
+  .filter((e) => e.isFile() && AUDIO_EXT.test(e.name) && !localOnly.has(e.name))
   .map((e) => e.name)
   .sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })

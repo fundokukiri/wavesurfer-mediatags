@@ -28,6 +28,9 @@ const SONGS = [
   { file: "Khắc Việt - Yêu Lại Từ Đầu.mp3", title: "Yêu Lại Từ Đầu", artist: "Khắc Việt", a: "#f6c7b6", b: "#b8455f", accent: "#40131f", motif: "sun" },
   { file: "Lời Yêu Đó.mp3", title: "Lời Yêu Đó", artist: "Tịch Dương", a: "#9fb8d1", b: "#22374a", accent: "#0f1d28", motif: "waves" },
   { file: "Minh Vương - Nỗi Đau Xót Xa.mp3", title: "Nỗi Đau Xót Xa", artist: "Minh Vương", a: "#b23a48", b: "#2a1418", accent: "#0f0708", motif: "rings" },
+  // Listed in audio/.local-only: on disk for local listening, never published.
+  { file: "Son Tung M-TP - Em Dau Du Tu Cach.mp3", title: "Em Dau Du Tu Cach", artist: "Son Tung M-TP", a: "#4a6fa5", b: "#131b2b", accent: "#070a12", motif: "line" },
+  { file: "fundokulinux - Fixing Everything.mp3", title: "Fixing Everything", artist: "fundokulinux", a: "#63b3a0", b: "#123a3a", accent: "#04100f", motif: "waves" },
 ];
 
 const STROKE = `fill="none" stroke="#ffffff"`;
