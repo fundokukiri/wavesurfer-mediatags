@@ -1566,10 +1566,25 @@
     const fillTooltip = (track) => {
       const fallback = parseFallbackName(track.name);
       tooltipEl.textContent = "";
+      // Same shape as a playlist row: cover, title, artist — then the fields
+      // the row truncates.
+      const head = document.createElement("div");
+      head.className = "tp-tip-head";
+      const art = document.createElement("img");
+      art.className = "tp-tip-art";
+      art.src = DEFAULT_ARTWORK;
+      art.alt = "";
+      const names = document.createElement("div");
+      names.className = "tp-tip-name";
       const title = document.createElement("div");
       title.className = "tp-tip-title";
       title.textContent = fallback.title;
-      tooltipEl.append(title);
+      const artist = document.createElement("div");
+      artist.className = "tp-tip-artist";
+      artist.textContent = fallback.artist;
+      names.append(title, artist);
+      head.append(art, names);
+      tooltipEl.append(head);
 
       const field = (label, value) => {
         const line = document.createElement("div");
@@ -1585,7 +1600,6 @@
         return text;
       };
 
-      field("Ca sĩ", fallback.artist);
       const album = field("Album", "…");
       const seconds = durationCache[track.path];
       field(
@@ -1594,7 +1608,7 @@
       );
       field("Nguồn", describeSource(track));
       field("Tệp", track.name);
-      return album;
+      return { album, art };
     };
 
     const placeTooltip = (row) => {
@@ -1624,12 +1638,13 @@
       const track = shuffledArray[Number(row.dataset.index)];
       if (!track) return;
       hoveredRow = row;
-      const album = fillTooltip(track);
+      const { album, art } = fillTooltip(track);
       tooltipEl.hidden = false;
       placeTooltip(row);
       getTrackMeta(Number(row.dataset.index)).then((meta) => {
         if (hoveredRow !== row) return;
         album.textContent = meta.album || "—";
+        art.src = meta.artworkUrl;
         placeTooltip(row);
       });
     });
