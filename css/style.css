@@ -159,6 +159,7 @@ body {
   width: 200px;
   overflow: hidden;
   -webkit-appearance: none;
+  appearance: none;
   background-color: rgb(255, 255, 255);
   border-radius: 15px;
   cursor: pointer;
@@ -178,6 +179,31 @@ body {
 
 #track-seek-bar::-webkit-slider-thumb:hover {
   box-shadow: -200px 0 0 200px #000000;
+}
+
+/* Firefox ignores ::-webkit-slider-thumb — it paints the track/fill itself. */
+#track-seek-bar::-moz-range-track {
+  height: 5px;
+  background-color: rgb(255, 255, 255);
+  border-radius: 15px;
+}
+
+#track-seek-bar::-moz-range-progress {
+  height: 5px;
+  background-color: #4d4d4d;
+  border-radius: 15px;
+}
+
+#track-seek-bar:hover::-moz-range-progress {
+  background-color: #000000;
+}
+
+#track-seek-bar::-moz-range-thumb {
+  width: 5px;
+  height: 5px;
+  border: none;
+  border-radius: 15px;
+  background: #4d4d4d;
 }
 
 .track_control-btn {
@@ -243,6 +269,7 @@ body {
   width: 160px;
   overflow: hidden;
   -webkit-appearance: none;
+  appearance: none;
   background-color: rgb(255, 255, 255);
   border-radius: 15px;
   cursor: pointer;
@@ -260,6 +287,27 @@ body {
 #volume-control-slider::-webkit-slider-thumb:hover {
   box-shadow: -200px 0 0 200px #000000;
   cursor: pointer;
+}
+
+/* Firefox fallback for the volume slider. */
+#volume-control-slider::-moz-range-track {
+  height: 13px;
+  background-color: rgb(255, 255, 255);
+  border-radius: 15px;
+}
+
+#volume-control-slider::-moz-range-progress {
+  height: 13px;
+  background-color: #4d4d4d;
+  border-radius: 15px;
+}
+
+#volume-control-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 15px;
+  background: #4d4d4d;
 }
 
 /* ---------------------------------------------------------------------------
@@ -787,7 +835,8 @@ body {
   }
 }
 
-#folder-chip {
+#folder-chip,
+#files-chip {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -801,13 +850,15 @@ body {
   overflow: hidden;
 }
 
-#folder-chip .material-symbols-rounded {
+#folder-chip .material-symbols-rounded,
+#files-chip .material-symbols-rounded {
   font-size: 18px;
   color: #4676f9;
   flex-shrink: 0;
 }
 
-#folder-chip-name {
+#folder-chip-name,
+#files-chip-name {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -816,7 +867,8 @@ body {
   font-weight: 600;
 }
 
-#folder-unlink {
+#folder-unlink,
+#files-unlink {
   border: none;
   background: transparent;
   color: #b6c3d4;
@@ -828,15 +880,18 @@ body {
   flex-shrink: 0;
 }
 
-#folder-unlink .material-symbols-rounded {
+#folder-unlink .material-symbols-rounded,
+#files-unlink .material-symbols-rounded {
   font-size: 16px;
 }
 
-#folder-unlink:hover {
+#folder-unlink:hover,
+#files-unlink:hover {
   color: #b3261e;
 }
 
-#folder-chip[hidden] {
+#folder-chip[hidden],
+#files-chip[hidden] {
   display: none;
 }
 
@@ -946,4 +1001,16 @@ body {
   background: linear-gradient(135deg, #ef476f, #d63457);
   color: #fff;
   box-shadow: 0 6px 14px rgba(239, 71, 111, 0.35);
+}
+
+.boot-error {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  padding: 10px 14px;
+  background: #d93025;
+  color: #fff;
+  font: 13px/1.4 "Montserrat", sans-serif;
 }
