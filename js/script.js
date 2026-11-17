@@ -131,8 +131,12 @@
     // frame and the browser rounds that into visible judder. Touch devices pay
     // for it with a 22,000px canvas at 2-3x DPR — measured at 60fps.
     minPxPerSec: 100,
+    // Drag/seek is handled by hand below so a swipe can scroll the canvas.
+    interact: false,
     mediaControls: false,
-    autoScroll: true,
+    // Playhead following is done by hand below too: waveSurfer re-centres the
+    // canvas on every frame, which undid a manual swipe.
+    autoScroll: false,
     autoCenter: true,
     audioRate: 1,
     normalize: false,
@@ -880,7 +884,12 @@
     // Audio events
     // ---------------------------------------------------------------------------
 
+    // wavesurfer.isPlaying() lies here (it says true while paused), so the
+    // play state the playhead follow needs is tracked from these two events.
+    let playing = false;
     wavesurfer.on("pause", () => {
+      playing = false;
+      cancelAnimationFrame(followHandle);
       playPauseBtnIcon.textContent = "play_arrow";
       if ("mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "paused";
@@ -897,6 +906,9 @@
     });
 
     wavesurfer.on("play", () => {
+      playing = true;
+      cancelAnimationFrame(followHandle);
+      followHandle = requestAnimationFrame(followLoop);
       playPauseBtnIcon.textContent = "pause";
       if ("mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "playing";
@@ -987,6 +999,111 @@
       hadSuccessfulReady = true;
       loadedKey = currentKey;
     });
+
+    // Waveform gestures: a swipe scrolls the canvas with inertia, a tap seeks.
+    // wavesurfer's own interact would seek on the first pixel of every swipe.
+    const waveStrip = document.querySelector("#waveform");
+    const waveScrollEl = () => wavesurfer.getWrapper()?.parentElement || null;
+    let waveDrag = null;
+    let waveVelocity = 0;
+    let waveGlide = 0;
+    let waveGliding = false;
+
+    const glideWave = () => {
+      const scroll = waveScrollEl();
+      if (!scroll || Math.abs(waveVelocity) < 0.4) {
+        waveGliding = false;
+        return;
+      }
+      waveGliding = true;
+      const before = scroll.scrollLeft;
+      scroll.scrollLeft = before + waveVelocity;
+      waveVelocity *= 0.94;
+      // A clamped scrollLeft means the canvas hit an edge: stop gliding.
+      if (scroll.scrollLeft === before) {
+        waveGliding = false;
+        return;
+      }
+      waveGlide = requestAnimationFrame(glideWave);
+    };
+
+    // Capture: wavesurfer stops pointer events inside its shadow tree.
+    waveStrip?.addEventListener("pointerdown", (e) => {
+      if (!waveScrollEl()) return;
+      cancelAnimationFrame(waveGlide);
+      waveGliding = false;
+      waveVelocity = 0;
+      waveDrag = {
+        x: e.clientX,
+        lastX: e.clientX,
+        scroll: waveScrollEl().scrollLeft,
+        moved: false,
+      };
+    }, true);
+
+    waveStrip?.addEventListener("pointermove", (e) => {
+      if (!waveDrag) return;
+      const scroll = waveScrollEl();
+      if (!scroll) return;
+      const dx = e.clientX - waveDrag.x;
+      if (!waveDrag.moved && Math.abs(dx) < 6) return;
+      waveDrag.moved = true;
+      // Velocity from this frame's travel; position from the whole swipe.
+      waveVelocity = 0.8 * -(e.clientX - waveDrag.lastX) + 0.2 * waveVelocity;
+      waveDrag.lastX = e.clientX;
+      scroll.scrollLeft = waveDrag.scroll - dx;
+    }, true);
+
+    const endWaveDrag = (e) => {
+      if (!waveDrag) return;
+      const drag = waveDrag;
+      waveDrag = null;
+      if (drag.moved) {
+        if (Math.abs(waveVelocity) > 1.5) {
+          waveGliding = true;
+          waveGlide = requestAnimationFrame(glideWave);
+        }
+        return;
+      }
+      // A tap (no movement) seeks: the mapping wavesurfer used to do for us.
+      const scroll = waveScrollEl();
+      const wrapper = wavesurfer.getWrapper();
+      const duration = wavesurfer.getDuration();
+      const pxPerSec = wrapper && duration ? wrapper.clientWidth / duration : 0;
+      if (!scroll || !pxPerSec) return;
+      const offset = e.clientX - waveStrip.getBoundingClientRect().left;
+      wavesurfer.setTime(
+        Math.min(Math.max((scroll.scrollLeft + offset) / pxPerSec, 0), duration)
+      );
+    };
+
+    waveStrip?.addEventListener("pointerup", endWaveDrag, true);
+    waveStrip?.addEventListener(
+      "pointercancel",
+      () => {
+        waveDrag = null;
+      },
+      true
+    );
+
+    // Keep the playhead centred while playing, unless the user is steering the
+    // canvas. "timeupdate" also fires on pauses, and re-centring there would
+    // undo a swipe the moment it ended.
+    const followWave = () => {
+      if (!playing || waveDrag || waveGliding) return;
+      const scroll = waveScrollEl();
+      const wrapper = wavesurfer.getWrapper();
+      const duration = wavesurfer.getDuration();
+      if (!scroll || !wrapper || !duration) return;
+      const playhead = (wavesurfer.getCurrentTime() / duration) * wrapper.clientWidth;
+      scroll.scrollLeft = Math.max(0, playhead - scroll.clientWidth / 2);
+    };
+
+    let followHandle = 0;
+    const followLoop = () => {
+      followWave();
+      followHandle = requestAnimationFrame(followLoop);
+    };
 
     // "timeupdate" fires while playing and after seeks (even when paused).
     wavesurfer.on("timeupdate", () => {
@@ -1105,10 +1222,13 @@
       let startX = 0;
       let startY = 0;
       let tracking = false;
-      // Sliders, text fields and the chip strip own their horizontal drags.
+      // Sliders, text fields, the chip strip and the waveform canvas own their
+      // horizontal drags.
       const ownsDrag = (target) =>
         target instanceof Element &&
-        Boolean(target.closest("input, textarea, select, #folder-chip-list"));
+        Boolean(
+          target.closest("input, textarea, select, #folder-chip-list, #waveform")
+        );
 
       document.addEventListener(
         "touchstart",

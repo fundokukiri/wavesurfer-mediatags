@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/",
-    "test:browser": "node test/browser.mjs && node test/resume.mjs && node test/multi-folder.e2e.mjs && node test/swipe.mjs && node test/tooltip.mjs"
+    "test:browser": "node test/browser.mjs && node test/resume.mjs && node test/multi-folder.e2e.mjs && node test/swipe.mjs && node test/tooltip.mjs && node test/waveform-swipe.mjs"
   },
   "devDependencies": {
     "playwright": "^1.65.1"
