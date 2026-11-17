@@ -64,10 +64,19 @@ try {
     shown.text.includes(row.title),
     shown.text
   );
-  check("card has every field", shown.rows === 5, `${shown.rows} fields`);
-  for (const label of ["Ca sĩ", "Album", "Thời lượng", "Nguồn", "Tệp"]) {
+  check("card has every field", shown.rows === 4, `${shown.rows} fields`);
+  for (const label of ["Album", "Thời lượng", "Nguồn", "Tệp"]) {
     check(`field ${label}`, shown.text.includes(label));
   }
+  check(
+    "card header carries the cover and the artist",
+    (await page.evaluate(() => {
+      const card = document.querySelector("#track-tooltip");
+      const art = card.querySelector(".tp-tip-art");
+      const artist = card.querySelector(".tp-tip-artist");
+      return Boolean(art && art.getAttribute("src") && artist?.textContent.trim());
+    }))
+  );
   check(
     "card stays inside the window",
     shown.box.x >= 0 &&
