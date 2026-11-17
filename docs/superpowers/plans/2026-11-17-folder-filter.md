@@ -103,7 +103,6 @@ takes the event and calls `e.stopPropagation()` first so it does not toggle.
 Run: `node --test test/` → 5/5 pass.
 Run: `node test/multi-folder.e2e.mjs` → all checks pass, no page errors.
 
-- [ ] **Step 5: Changelog**
+- [ ] **Step 5: No changelog**
 
-Add one bullet to `CHANGELOG.md` under the current date: clicking a folder
-chip filters the playlist to that folder, clicking again shows everything.
+This repo keeps no CHANGELOG; the commit message carries the change.
