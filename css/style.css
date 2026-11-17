@@ -622,8 +622,13 @@ body {
   display: none;
 }
 
+/* Same lift as the header buttons: the row brightens to white and its shadow
+   tightens. The active row keeps its blue gradient, which is defined below. */
 .tbody-playlist:hover {
   transform: translateY(-1px);
+  background-color: #ffffff;
+  box-shadow: 2px 2px 8px rgba(100, 125, 152, 0.22),
+    -2px -2px 8px rgba(255, 255, 255, 0.95);
 }
 
 .tbody-playlist.active {
