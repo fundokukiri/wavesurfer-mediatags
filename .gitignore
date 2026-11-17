@@ -22,3 +22,8 @@ npm-debug.log*
 # Code intelligence indexes (codegraph / graphify)
 .codegraph/
 graphify-out/
+
+# Music and its generated playlist stay local — the tracks are not ours to
+# redistribute, so they never enter the repo.
+audio/*.mp3
+audio/playlist.json
