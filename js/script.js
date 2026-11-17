@@ -117,6 +117,14 @@
     /iP(hone|oad|od)/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+  // Firefox rasterizes the waveform's wide canvas stack in software, and at DPR
+  // 2 the bitmap is four times bigger — it drops to 20-30fps while Chrome and
+  // Safari stay at 60. Wavesurfer only reads this for canvas sizing and scales
+  // the result back with CSS, so rendering at 1x costs sharpness, not layout.
+  if (/firefox/i.test(navigator.userAgent)) {
+    Object.defineProperty(window, "devicePixelRatio", { get: () => 1 });
+  }
+
   const options = {
     container: "#waveform",
     waveColor: "#b5b7b8",
