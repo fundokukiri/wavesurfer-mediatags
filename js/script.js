@@ -117,14 +117,6 @@
     /iP(hone|oad|od)/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-  // Firefox rasterizes the waveform's wide canvas stack in software, and at DPR
-  // 2 the bitmap is four times bigger — it drops to 20-30fps while Chrome and
-  // Safari stay at 60. Wavesurfer only reads this for canvas sizing and scales
-  // the result back with CSS, so rendering at 1x costs sharpness, not layout.
-  if (/firefox/i.test(navigator.userAgent)) {
-    Object.defineProperty(window, "devicePixelRatio", { get: () => 1 });
-  }
-
   const options = {
     container: "#waveform",
     waveColor: "#b5b7b8",
@@ -980,6 +972,18 @@
           : { lastTrack: currentTrack.name, lastTrackKey: currentKey }
       );
       updatePositionState();
+      // Firefox drops to 20-30fps while scrolling a waveform drawn at 100px/s
+      // (a 22,000px canvas stack) and rendering it at 1x pixel ratio changed
+      // nothing, so the cost is the width itself. Cap it there and nowhere
+      // else: ~9,000px is about 38px/s for a four-minute song, still moving.
+      if (
+        /firefox/i.test(navigator.userAgent) &&
+        wavesurfer.getDuration() > 0
+      ) {
+        const cap = Math.max(window.innerWidth * 7, 5000);
+        const pxPerSec = cap / wavesurfer.getDuration();
+        if (pxPerSec < options.minPxPerSec) wavesurfer.zoom(pxPerSec);
+      }
       hadSuccessfulReady = true;
       loadedKey = currentKey;
     });
