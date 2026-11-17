@@ -386,8 +386,11 @@ body {
   transition: box-shadow 0.2s ease, color 0.2s ease;
 }
 
+/* One hover for all four: the accent buttons are already blue, so the white
+   fill is what makes their hover visible. */
 .head-btn:hover {
   color: #4676f9;
+  background-color: #ffffff;
 }
 
 .head-btn.active {
