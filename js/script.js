@@ -1548,9 +1548,17 @@
 
     // The row truncates with an ellipsis, so hover shows the whole record.
     const tooltipEl = document.querySelector("#track-tooltip");
+    // Long enough that clicking a row never flashes a card; short enough that
+    // a deliberate hover still feels immediate.
+    const HOVER_DELAY_MS = 2000;
     let hoveredRow = null;
+    let pendingRow = null;
+    let hoverTimer = 0;
 
     const hideTooltip = () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = 0;
+      pendingRow = null;
       hoveredRow = null;
       if (tooltipEl) tooltipEl.hidden = true;
     };
@@ -1561,8 +1569,14 @@
       return "Máy chủ (audio/)";
     };
 
-    // Returns the Album value node: tags are parsed asynchronously, so the
-    // caller fills it once getTrackMeta settles.
+    const sourceIcon = (track) => {
+      if (track.source === "folder") return "folder_open";
+      if (track.source === "file") return "upload_file";
+      return "cloud";
+    };
+
+    // Returns the parts that arrive with the tags: the caller fills them once
+    // getTrackMeta settles.
     const fillTooltip = (track) => {
       const fallback = parseFallbackName(track.name);
       tooltipEl.textContent = "";
@@ -1586,28 +1600,36 @@
       head.append(art, names);
       tooltipEl.append(head);
 
-      const field = (label, value) => {
+      const body = document.createElement("div");
+      body.className = "tp-tip-body";
+      tooltipEl.append(body);
+
+      const field = (icon, label, value) => {
         const line = document.createElement("div");
         line.className = "tp-tip-row";
+        const glyph = document.createElement("span");
+        glyph.className = "material-symbols-rounded tp-tip-icon";
+        glyph.textContent = icon;
         const name = document.createElement("span");
         name.className = "tp-tip-label";
         name.textContent = label;
         const text = document.createElement("span");
         text.className = "tp-tip-value";
         text.textContent = value;
-        line.append(name, text);
-        tooltipEl.append(line);
+        line.append(glyph, name, text);
+        body.append(line);
         return text;
       };
 
-      const album = field("Album", "…");
+      const album = field("album", "Album", "…");
       const seconds = durationCache[track.path];
       field(
+        "schedule",
         "Thời lượng",
         Number.isFinite(seconds) && seconds > 0 ? formatTime(seconds) : "—"
       );
-      field("Nguồn", describeSource(track));
-      field("Tệp", track.name);
+      field(sourceIcon(track), "Nguồn", describeSource(track));
+      field("description", "Tệp", track.name);
       return { album, art };
     };
 
@@ -1624,17 +1646,13 @@
       tooltipEl.style.left = `${left}px`;
       tooltipEl.style.top = `${Math.max(
         gap,
-        above >= gap ? above : Math.min(rect.bottom + gap, window.innerHeight - tip.height - gap)
+        above >= gap
+          ? above
+          : Math.min(rect.bottom + gap, window.innerHeight - tip.height - gap)
       )}px`;
     };
 
-    const playlistBody = document.querySelector(".tbody");
-    // pointermove, not pointerover: a panel that slides in under a resting
-    // cursor must not pop a card nobody asked for.
-    playlistBody?.addEventListener("pointermove", (e) => {
-      if (e.pointerType !== "mouse" || !tooltipEl) return;
-      const row = e.target.closest?.(".tbody-playlist");
-      if (!row || row === hoveredRow) return;
+    const showTooltip = (row) => {
       const track = shuffledArray[Number(row.dataset.index)];
       if (!track) return;
       hoveredRow = row;
@@ -1647,11 +1665,29 @@
         art.src = meta.artworkUrl;
         placeTooltip(row);
       });
+    };
+
+    const playlistBody = document.querySelector(".tbody");
+    // pointermove, not pointerover: a panel that slides in under a resting
+    // cursor must not pop a card nobody asked for.
+    playlistBody?.addEventListener("pointermove", (e) => {
+      if (e.pointerType !== "mouse" || !tooltipEl) return;
+      const row = e.target.closest?.(".tbody-playlist");
+      if (!row || row === pendingRow) return;
+      pendingRow = row;
+      clearTimeout(hoverTimer);
+      // Moving straight to another row drops the old card instead of leaving
+      // a stale one under the pointer for two seconds.
+      if (hoveredRow && hoveredRow !== row) hideTooltip();
+      pendingRow = row;
+      hoverTimer = setTimeout(() => {
+        if (pendingRow === row) showTooltip(row);
+      }, HOVER_DELAY_MS);
     });
     playlistBody?.addEventListener("pointerout", (e) => {
-      if (!hoveredRow) return;
       const to = e.relatedTarget;
-      if (to instanceof Node && hoveredRow.contains(to)) return;
+      if (hoveredRow && to instanceof Node && hoveredRow.contains(to)) return;
+      if (pendingRow && to instanceof Node && pendingRow.contains(to)) return;
       hideTooltip();
     });
     // Any scroll (sidebar list, page) moves the row out from under the card.
