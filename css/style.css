@@ -867,6 +867,15 @@ body {
   overflow: hidden;
 }
 
+/* The chip body filters the playlist on click, so it reads as a button. */
+.folder-chip {
+  cursor: pointer;
+}
+
+.folder-chip:hover {
+  background: rgba(70, 118, 249, 0.14);
+}
+
 #files-chip {
   margin-top: 12px;
 }
