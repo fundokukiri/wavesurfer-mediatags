@@ -1086,10 +1086,10 @@
       sidebar.classList.remove("active");
     bgLayer.onclick = () => sidebar.classList.remove("active");
 
-    // Touch only: swipe right from the left edge opens the playlist, swipe
-    // left closes it. Mouse/desktop keeps the art and backdrop clicks.
+    // Touch only: swipe right opens the playlist, swipe left closes it.
+    // Mouse/desktop keeps the art and backdrop clicks. No edge requirement:
+    // on iOS the left-edge swipe belongs to the browser's back gesture.
     if (window.matchMedia("(pointer: coarse)").matches) {
-      const EDGE_PX = 40;
       const MIN_SWIPE_PX = 60;
       let startX = 0;
       let startY = 0;
@@ -1103,10 +1103,8 @@
         "touchstart",
         (e) => {
           const touch = e.touches[0];
-          tracking =
-            !ownsDrag(e.target) &&
-            (sidebar.classList.contains("active") ||
-              (e.touches.length === 1 && touch.clientX <= EDGE_PX));
+          // One finger anywhere except on a control that drags sideways.
+          tracking = !ownsDrag(e.target) && e.touches.length === 1;
           if (!tracking) return;
           startX = touch.clientX;
           startY = touch.clientY;

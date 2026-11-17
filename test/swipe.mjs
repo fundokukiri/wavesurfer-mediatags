@@ -1,5 +1,5 @@
-// Touch-only swipe for the playlist panel: swipe right from the left edge to
-// open it, swipe left to close it. Desktop (no coarse pointer) must not react.
+// Touch-only swipe for the playlist panel: swipe right opens it, swipe left
+// closes it. Desktop (no coarse pointer) must not react.
 // Run: node test/swipe.mjs
 import { chromium } from "playwright";
 import { startServer } from "./server.mjs";
@@ -10,15 +10,35 @@ const browser = await chromium.launch({ args: ["--no-sandbox"] });
 const results = [];
 const check = (name, ok, detail = "") => results.push({ name, ok, detail });
 
-// page.touchscreen can only tap, so build the two TouchEvents by hand.
-const swipe = (page, fromX, fromY, toX, toY) =>
+// Real touch input through CDP: it goes through the browser's own gesture
+// handling, so a touchcancel or a swallowed move shows up instead of passing.
+const swipe = async (ctx, page, fromX, fromY, toX, toY) => {
+  const cdp = await ctx.newCDPSession(page);
+  const send = (type, points) =>
+    cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points });
+  await send("touchStart", [{ x: fromX, y: fromY }]);
+  for (let i = 1; i <= 4; i++) {
+    await send("touchMove", [
+      {
+        x: fromX + ((toX - fromX) * i) / 4,
+        y: fromY + ((toY - fromY) * i) / 4,
+      },
+    ]);
+    await page.waitForTimeout(30);
+  }
+  await send("touchEnd", []);
+  await cdp.detach();
+};
+
+// The desktop context has no touch support, so a synthetic event is the only
+// way to prove that nothing reacts there.
+const syntheticSwipe = (page, fromX, toX) =>
   page.evaluate(
-    ([fromX, fromY, toX, toY]) => {
-      const target =
-        document.elementFromPoint(fromX, fromY) || document.body;
-      const mk = (x, y) =>
-        new Touch({ identifier: 1, target, clientX: x, clientY: y });
-      const start = mk(fromX, fromY);
+    ([fromX, toX]) => {
+      const target = document.elementFromPoint(fromX, 400) || document.body;
+      const mk = (x) =>
+        new Touch({ identifier: 1, target, clientX: x, clientY: 400 });
+      const start = mk(fromX);
       target.dispatchEvent(
         new TouchEvent("touchstart", {
           bubbles: true,
@@ -26,7 +46,7 @@ const swipe = (page, fromX, fromY, toX, toY) =>
           changedTouches: [start],
         })
       );
-      const end = mk(toX, toY);
+      const end = mk(toX);
       target.dispatchEvent(
         new TouchEvent("touchend", {
           bubbles: true,
@@ -35,7 +55,7 @@ const swipe = (page, fromX, fromY, toX, toY) =>
         })
       );
     },
-    [fromX, fromY, toX, toY]
+    [fromX, toX]
   );
 
 const isOpen = (page) =>
@@ -68,23 +88,19 @@ try {
   );
   check("playlist starts closed", !(await isOpen(page)));
 
-  await swipe(page, 10, 400, 220, 410);
+  await swipe(phone, page, 180, 400, 320, 405);
   await page.waitForTimeout(350);
-  check("swipe right from the left edge opens it", await isOpen(page));
+  check("a swipe right down the middle opens it", await isOpen(page));
 
-  await swipe(page, 300, 400, 120, 405);
+  await swipe(phone, page, 300, 400, 120, 405);
   await page.waitForTimeout(350);
   check("swipe left closes it", !(await isOpen(page)));
 
-  await swipe(page, 200, 400, 320, 405);
+  await swipe(phone, page, 10, 250, 18, 520);
   await page.waitForTimeout(350);
-  check("a swipe that starts away from the edge leaves it closed", !(await isOpen(page)));
+  check("a vertical scroll is not a swipe", !(await isOpen(page)));
 
-  await swipe(page, 10, 250, 18, 520);
-  await page.waitForTimeout(350);
-  check("a vertical scroll from the edge is not a swipe", !(await isOpen(page)));
-
-  await swipe(page, 10, 400, 60, 405);
+  await swipe(phone, page, 10, 400, 60, 405);
   await page.waitForTimeout(350);
   check("a 50px drag is too short to open", !(await isOpen(page)));
 
@@ -99,7 +115,7 @@ try {
     "desktop reports a fine pointer",
     await deskPage.evaluate(() => !matchMedia("(pointer: coarse)").matches)
   );
-  await swipe(deskPage, 10, 400, 320, 405);
+  await syntheticSwipe(deskPage, 10, 320);
   await deskPage.waitForTimeout(350);
   check("desktop swipe does nothing", !(await isOpen(deskPage)));
   await deskPage.click(".album-art");

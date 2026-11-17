@@ -21,7 +21,8 @@ the playlist and the backdrop closes it.
 - Only when `(pointer: coarse)` matches, i.e. a touch device. A touch-screen
   laptop with a mouse does keep the desktop behaviour, and the desktop build of
   the app is byte-identical in behaviour if that media query is false.
-- Opening: the touch must start within 40 px of the left edge.
+- Opening: any single-finger swipe right, with no edge requirement (on iOS
+  the left-edge swipe belongs to the browser back gesture).
 - Closing: any single-finger swipe left while the playlist is open.
 - A gesture counts only if it moves at least 60 px horizontally and is at least
   1.5x more horizontal than vertical, so vertical scrolling and taps still work.
