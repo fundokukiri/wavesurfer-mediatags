@@ -139,7 +139,13 @@ body {
 }
 
 #waveform {
-  cursor: pointer;
+  cursor: grab;
+  /* Vertical page pan stays with the browser; sideways is our canvas swipe. */
+  touch-action: pan-y;
+}
+
+#waveform:active {
+  cursor: grabbing;
 }
 
 .track-time {
