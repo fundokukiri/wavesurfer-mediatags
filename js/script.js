@@ -129,10 +129,10 @@
     cursorWidth: 0,
     barRadius: 3,
     // Touch devices render the canvas at 2-3x DPR and keep scrolling it while
-    // playing, so they get half the density of desktop (11,000px instead of
-    // 22,000px). Going below 50 makes the canvas creep 0.4px per frame, which
-    // the browser rounds into visible judder.
-    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 50 : 100,
+    // playing, so they keep a lighter canvas than desktop (17,000px against
+    // 22,000px). Below 50 the canvas creeps under a pixel per frame and the
+    // browser rounds that into visible judder.
+    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 75 : 100,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
