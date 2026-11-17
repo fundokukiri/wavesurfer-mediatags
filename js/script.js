@@ -39,9 +39,9 @@
   const dropHint = app.querySelector("#drop-hint");
   const restoreBanner = app.querySelector("#folder-restore");
   const restoreName = app.querySelector("#folder-restore-name");
-  const folderChip = app.querySelector("#folder-chip");
-  const folderChipName = app.querySelector("#folder-chip-name");
-  const folderUnlinkBtn = app.querySelector("#folder-unlink");
+  // Per-folder chips are built at runtime inside this container — the HTML
+  // ships it empty and script fills it with one chip per linked folder.
+  const folderChipList = app.querySelector("#folder-chip-list");
   const toastEl = document.querySelector("#toast");
   const confirmModal = document.querySelector("#confirm-modal");
   const confirmTitle = document.querySelector("#confirm-title");
@@ -390,6 +390,39 @@
       id: `local:${file.name}:${file.size}`,
     }));
 
+  // Folder identity for fallback (webkitdirectory) picks: the first segment
+  // of the file's relative path — the picked folder's top-level name. Picks
+  // without relative paths (programmatic/test input) degrade to the bare
+  // file name, which is still stable across reloads.
+  const folderIdFromRelPath = (relPath) => (relPath || "").split("/")[0];
+
+  // Folder identity of a persisted fallback file ("dirfile:<path>:<size>").
+  // The size suffix lives at the END of the key, so it is stripped before
+  // the top-level segment is taken (matters when the path has no folders).
+  const folderIdFromDirFileKey = (key) =>
+    folderIdFromRelPath(
+      String(key).slice("dirfile:".length).replace(/:\d+$/, "")
+    );
+
+  // Track id for handle-scanned folder files. The folder name leads the id
+  // so identical subpaths+sizes in two different folders never collide —
+  // removeTracks keys on ids, and a collision would delete two folders'
+  // tracks together. (Pre-multi-folder favorites keyed on the old id
+  // format simply won't match anymore.)
+  const buildFolderTrackId = (folderId, prefix, name, size) =>
+    `local:${folderId}/${prefix}${name}:${size}`;
+
+  // Does a track id belong to a folder? Handle-scanned ids lead with the
+  // folder name ("local:<folder>/..."); fallback ids carry it as the first
+  // relative-path segment, or as "<folder>:<size>" for picks without
+  // relative paths. Lets unlinking lift exactly one folder's exclusions.
+  const folderOwnsTrackId = (folderId, trackId) => {
+    if (typeof trackId !== "string" || !trackId.startsWith("local:"))
+      return false;
+    const rest = trackId.slice("local:".length);
+    return rest.startsWith(`${folderId}/`) || rest.startsWith(`${folderId}:`);
+  };
+
   // Files persisted by the webkitdirectory fallback — keyed by their path
   // inside the picked folder ("dirfile:<relativePath>:<size>").
   const tracksFromDirFileEntries = (entries) =>
@@ -401,12 +434,21 @@
         file,
         local: true,
         source: "folder",
+        folderId: folderIdFromDirFileKey(key),
         id: `local:${relPath}`,
       };
     });
 
-  // Recursively read a picked directory handle (Chromium File System Access).
-  const scanDirHandle = async (dirHandle, prefix = "", depth = 0) => {
+  // Recursively read a picked directory handle (Chromium File System
+  // Access). The ROOT handle's name is threaded through the recursion: it
+  // tags every track with its folderId and leads its id (see
+  // buildFolderTrackId) — subdirectory names must not hijack the identity.
+  const scanDirHandle = async (
+    dirHandle,
+    prefix = "",
+    depth = 0,
+    folderId = dirHandle.name
+  ) => {
     const tracks = [];
     for await (const entry of dirHandle.values()) {
       if (entry.kind === "file" && AUDIO_EXT.test(entry.name)) {
@@ -417,11 +459,17 @@
           file,
           local: true,
           source: "folder",
-          id: `local:${prefix}${entry.name}:${file.size}`,
+          folderId,
+          id: buildFolderTrackId(folderId, prefix, entry.name, file.size),
         });
       } else if (entry.kind === "directory" && depth < 2) {
         tracks.push(
-          ...(await scanDirHandle(entry, `${prefix}${entry.name}/`, depth + 1))
+          ...(await scanDirHandle(
+            entry,
+            `${prefix}${entry.name}/`,
+            depth + 1,
+            folderId
+          ))
         );
       }
     }
@@ -1048,7 +1096,8 @@
 
     // Add a whole music folder. Chromium uses the File System Access API so
     // the handle can be persisted and rescanned after reloads; other browsers
-    // fall back to a webkitdirectory input (session-only).
+    // fall back to a webkitdirectory input (session-only). Each folder is
+    // stored under its own key, so several stay linked side by side.
     folderBtn.addEventListener("click", async () => {
       // A long-press just cleared the category — swallow that click.
       if (folderBtn.__longFired) {
@@ -1058,13 +1107,14 @@
       if (typeof window.showDirectoryPicker === "function") {
         try {
           const handle = await window.showDirectoryPicker({ mode: "read" });
-          await idbSet("dirHandle", handle).catch(() => {});
+          // One key per folder — picking a new one never replaces or removes
+          // an already linked folder.
+          await idbSet(`dirHandle:${handle.name}`, handle).catch(() => {});
           const tracks = (await scanDirHandle(handle)).filter(
             (t) => !excludedTracks.has(t.id)
           );
           addTracks(tracks);
-          showFolderChip(handle);
-          if (restoreBanner) restoreBanner.hidden = true;
+          linkFolder(handle.name, handle);
         } catch {
           // User cancelled the picker.
         }
@@ -1088,18 +1138,24 @@
         idbSet(key, file).catch(() => {});
       });
       addTracks(
-        files.map((file) => ({
-          name: file.name.replace(/\.[^.]+$/, ""),
-          path: URL.createObjectURL(file),
-          file,
-          local: true,
-          source: "folder",
-          id: `local:${file.webkitRelativePath || file.name}:${file.size}`,
-        }))
+        files.map((file) => {
+          const relPath = file.webkitRelativePath || file.name;
+          return {
+            name: file.name.replace(/\.[^.]+$/, ""),
+            path: URL.createObjectURL(file),
+            file,
+            local: true,
+            source: "folder",
+            folderId: folderIdFromRelPath(relPath),
+            id: `local:${relPath}:${file.size}`,
+          };
+        })
       );
       if (files.length) {
+        // Fallback picks have no handle — the top-level dir name is the
+        // folder's identity for its chip and per-folder unlinking.
         const relPath = files[0].webkitRelativePath || files[0].name;
-        showFolderChipName(relPath.split("/")[0]);
+        linkFolder(folderIdFromRelPath(relPath), null);
       }
       folderFallback.value = "";
     };
@@ -1466,11 +1522,11 @@
       }
       const ok = await confirmTwice(
         "Remove folder songs?",
-        `This will remove ${folderTracks.length} songs from the linked folder. The folder stays linked.`,
+        `This will remove ${folderTracks.length} songs from ALL linked folders. The folders stay linked.`,
         "Continue"
       );
       if (!ok) return;
-      // The folder stays linked — exclusions keep these songs out of rescans;
+      // The folders stay linked — exclusions keep these songs out of rescans;
       // tombstones keep fallback-persisted files out of the IDB restore.
       folderTracks.forEach((t) => {
         excludedTracks.add(t.id);
@@ -1559,38 +1615,240 @@
       }
     };
 
-    const showFolderChip = (handle) => {
-      if (folderChipName) folderChipName.textContent = handle.name;
-      if (folderChip) folderChip.hidden = false;
+    // Linked folders in add order (a Map keeps insertion order) — the chip
+    // list's source of truth. The handle is kept for later permission
+    // requests; fallback picks register with null (no handle on this
+    // browser).
+    const linkedFolders = new Map();
+
+    // One chip per linked folder, built at runtime (the HTML ships an empty
+    // container). Hidden entirely when nothing is linked.
+    const renderFolderChips = () => {
+      if (!folderChipList) return;
+      folderChipList.textContent = "";
+      // Registry order first, then folder ids only seen on tracks — every
+      // folder with songs gets a chip even if it missed the registry.
+      const ids = [...linkedFolders.keys()];
+      const seen = new Set(ids);
+      allTracks.forEach((t) => {
+        if (t.source === "folder" && t.folderId && !seen.has(t.folderId)) {
+          seen.add(t.folderId);
+          ids.push(t.folderId);
+        }
+      });
+      ids.forEach((id) => {
+        const chip = document.createElement("div");
+        chip.className = "folder-chip";
+        const icon = document.createElement("span");
+        icon.className = "material-symbols-rounded";
+        icon.textContent = "folder_open";
+        const label = document.createElement("span");
+        label.className = "folder-chip-name";
+        label.textContent = id;
+        const unlink = document.createElement("button");
+        unlink.type = "button";
+        unlink.className = "folder-chip-unlink";
+        unlink.setAttribute("aria-label", "Unlink music folder");
+        const unlinkIcon = document.createElement("span");
+        unlinkIcon.className = "material-symbols-rounded";
+        unlinkIcon.textContent = "close";
+        unlink.append(unlinkIcon);
+        unlink.onclick = () => unlinkFolderFlow(id);
+        chip.append(icon, label, unlink);
+        folderChipList.append(chip);
+      });
+      folderChipList.hidden = ids.length === 0;
     };
 
-    // Fallback picks have no handle — the chip still shows the folder name.
-    const showFolderChipName = (name) => {
-      if (folderChipName) folderChipName.textContent = name;
-      if (folderChip) folderChip.hidden = false;
+    // The strip slides: touch swipes natively (pan-x), desktop mice get a
+    // grab-drag here. A click ending a real drag is swallowed so sliding
+    // past a ✕ never unlinks by accident.
+    if (folderChipList) {
+      let dragX = null;
+      let dragMoved = false;
+      let dragVelocity = 0; // scrollLeft px per pointermove, smoothed
+      let wheelTarget = null;
+      let glideRaf = 0;
+
+      // Single rAF runner for both easing motions (wheel glide and drag
+      // momentum); starting one cancels the other, a grab cancels both.
+      const glide = (step) => {
+        cancelAnimationFrame(glideRaf);
+        const frame = () => {
+          if (step() !== false) glideRaf = requestAnimationFrame(frame);
+        };
+        glideRaf = requestAnimationFrame(frame);
+      };
+      const clampLeft = (v) =>
+        Math.max(
+          0,
+          Math.min(folderChipList.scrollWidth - folderChipList.clientWidth, v)
+        );
+
+      folderChipList.addEventListener("pointerdown", (e) => {
+        cancelAnimationFrame(glideRaf);
+        wheelTarget = null;
+        if (e.pointerType !== "mouse") return;
+        dragX = e.clientX;
+        dragMoved = false;
+        dragVelocity = 0;
+      });
+      folderChipList.addEventListener("pointermove", (e) => {
+        if (dragX === null) return;
+        const dx = e.clientX - dragX;
+        if (Math.abs(dx) < 5) return;
+        if (!dragMoved) {
+          dragMoved = true;
+          // Capture only once it is a real drag: capturing on pointerdown
+          // would retarget the click too and ✕ would stop receiving clicks.
+          try {
+            folderChipList.setPointerCapture(e.pointerId);
+          } catch {}
+        }
+        dragX = e.clientX;
+        folderChipList.scrollLeft -= dx;
+        dragVelocity = 0.8 * -dx + 0.2 * dragVelocity;
+      });
+      const endDrag = () => {
+        if (dragX === null) return;
+        dragX = null;
+        // Momentum glide after a real fling — a hard stop feels jerky.
+        if (!dragMoved || Math.abs(dragVelocity) < 2) return;
+        let v = dragVelocity;
+        glide(() => {
+          const left = folderChipList.scrollLeft;
+          folderChipList.scrollLeft = clampLeft(left + v);
+          v *= 0.92;
+          if (
+            Math.abs(v) < 0.5 ||
+            folderChipList.scrollLeft === left // hit an edge
+          ) {
+            glideRaf = 0;
+            return false;
+          }
+        });
+      };
+      folderChipList.addEventListener("pointerup", endDrag);
+      folderChipList.addEventListener("pointerleave", endDrag);
+      folderChipList.addEventListener("pointercancel", endDrag);
+      // A plain vertical wheel scrolls the strip too — desktop mice have no
+      // horizontal wheel of their own (shift+wheel arrives as deltaX
+      // already). Notches ease toward a running target instead of snapping.
+      folderChipList.addEventListener(
+        "wheel",
+        (e) => {
+          if (e.deltaX || !e.deltaY) return;
+          e.preventDefault();
+          const max =
+            folderChipList.scrollWidth - folderChipList.clientWidth;
+          const base =
+            wheelTarget === null ? folderChipList.scrollLeft : wheelTarget;
+          wheelTarget = clampLeft(base + e.deltaY);
+          glide(() => {
+            const left = folderChipList.scrollLeft;
+            if (Math.abs(wheelTarget - left) < 1) {
+              folderChipList.scrollLeft = wheelTarget;
+              wheelTarget = null;
+              glideRaf = 0;
+              return false;
+            }
+            folderChipList.scrollLeft = left + (wheelTarget - left) * 0.2;
+          });
+        },
+        { passive: false }
+      );
+      folderChipList.addEventListener(
+        "click",
+        (e) => {
+          if (!dragMoved) return;
+          dragMoved = false;
+          e.preventDefault();
+          e.stopPropagation();
+        },
+        true
+      );
+    }
+
+    // Register a linked folder — a no-op for an already linked one, so
+    // re-picking keeps the original chip order.
+    const linkFolder = (folderId, handle) => {
+      if (!linkedFolders.has(folderId)) linkedFolders.set(folderId, handle);
+      renderFolderChips();
     };
 
-    // Unlink the connected folder: drop the handle, remove all of its tracks
-    // and clear per-track exclusions (they only mattered for that folder).
-    // Works without a handle too — fallback-persisted folder files get
-    // tombstoned so they stay unlinked after a reload.
-    folderUnlinkBtn.onclick = async () => {
-      const folderTracks = allTracks.filter((t) => t.source === "folder");
+    // Handles still awaiting read permission after a reload — the restore
+    // banner offers them one at a time: a grant scans that folder, then the
+    // banner re-points itself at the next pending one (or hides).
+    let pendingRestoreHandles = [];
+    let bannerHandle = null;
+
+    // Scan a granted handle and merge its songs (minus previously removed
+    // ones) into the playlist. Re-checks the stored key so a folder unlinked
+    // mid-restore is not resurrected by an in-flight scan.
+    const restoreDirHandle = async (handle) => {
+      if (!(await idbGet(`dirHandle:${handle.name}`))) return;
+      const tracks = (await scanDirHandle(handle)).filter(
+        (t) => !excludedTracks.has(t.id)
+      );
+      addTracks(tracks);
+      linkFolder(handle.name, handle);
+      // Resume the last folder track, but never yank active playback.
+      if (!wavesurfer.isPlaying()) restoreLastLocalTrack();
+    };
+
+    const showRestoreBannerForNext = () => {
+      bannerHandle = pendingRestoreHandles.shift() || null;
+      if (!restoreBanner) return;
+      if (!bannerHandle) {
+        restoreBanner.hidden = true;
+        return;
+      }
+      restoreName.textContent = bannerHandle.name;
+      restoreBanner.hidden = false;
+      restoreBanner.onclick = async () => {
+        const handle = bannerHandle;
+        if (
+          (await handle.requestPermission({ mode: "read" })) !== "granted"
+        )
+          return;
+        restoreBanner.hidden = true;
+        // The folder may have been unlinked while the prompt was open.
+        if (linkedFolders.has(handle.name)) await restoreDirHandle(handle);
+        showRestoreBannerForNext();
+      };
+    };
+
+    // Unlink ONE folder (its chip's close button): drop the handle, remove
+    // only its songs, tombstone its persisted fallback files and lift only
+    // its exclusions — other folders keep their tracks, tombstones and
+    // exclusion entries. Works without a handle too — fallback-persisted
+    // folder files get tombstoned so they stay unlinked after a reload.
+    const unlinkFolderFlow = async (folderId) => {
+      const folderTracks = allTracks.filter(
+        (t) => t.source === "folder" && t.folderId === folderId
+      );
       // Same two-step confirmation as clearing added files.
       const ok = await confirmTwice(
         "Unlink music folder?",
         folderTracks.length
-          ? `This will remove ${folderTracks.length} songs from the linked folder and forget it.`
-          : "This will forget the connected folder.",
+          ? `This will remove ${folderTracks.length} songs from "${folderId}" and forget it.`
+          : `This will forget the folder "${folderId}".`,
         "Continue"
       );
       if (!ok) return;
       // Drop the handle even when its permission was never granted (banner
       // pending) — otherwise the banner keeps offering a removed folder.
-      await idbDel("dirHandle").catch(() => {});
-      saveSettings({ excludedTracks: [] });
-      excludedTracks.clear();
-      if (restoreBanner) restoreBanner.hidden = true;
+      await idbDel(`dirHandle:${folderId}`).catch(() => {});
+      linkedFolders.delete(folderId);
+      // A pending banner for THIS folder must stop offering it; other
+      // pending folders stay queued.
+      pendingRestoreHandles = pendingRestoreHandles.filter(
+        (h) => h.name !== folderId
+      );
+      if (bannerHandle?.name === folderId) {
+        bannerHandle = null;
+        showRestoreBannerForNext();
+      }
       folderTracks.forEach((t) => {
         const key = `dirfile:${(t.id || "").slice("local:".length)}`;
         if (/^(?:dir)?file:.+:\d+$/.test(key)) {
@@ -1598,9 +1856,18 @@
           idbDel(key).catch(() => {});
         }
       });
-      saveSettings({ removedFileKeys: [...removedFileKeys] });
+      // Exclusions only mattered while the folder was linked — lift exactly
+      // its entries so re-linking starts fresh. Never .clear(): that would
+      // un-hide other folders' removed songs on their next rescan.
+      excludedTracks.forEach((id) => {
+        if (folderOwnsTrackId(folderId, id)) excludedTracks.delete(id);
+      });
+      saveSettings({
+        excludedTracks: [...excludedTracks],
+        removedFileKeys: [...removedFileKeys],
+      });
       removeTracks(folderTracks);
-      if (folderChip) folderChip.hidden = true;
+      renderFolderChips();
     };
 
     // Bound once here — renderPlaylist() re-runs on every shuffle toggle.
@@ -1653,6 +1920,8 @@
     }
 
     renderPlaylist();
+    // Establish the chip container's state even before anything is linked.
+    renderFolderChips();
 
     // Restore user-added local music from a previous session.
     (async () => {
@@ -1666,40 +1935,47 @@
           (entry) => !removedFileKeys.has(String(entry.key))
         );
         addTracks(tracksFromDirFileEntries(dirStored));
-        if (dirStored.length) {
-          const relPath = String(dirStored[0].key).slice("dirfile:".length);
-          showFolderChipName(relPath.split("/")[0]);
-        }
+        // One chip per restored fallback folder, grouped by folder id —
+        // these folders have no handle on this browser.
+        const restoredFolderIds = [
+          ...new Set(
+            dirStored.map((entry) => folderIdFromDirFileKey(entry.key))
+          ),
+        ];
+        restoredFolderIds.forEach((id) => linkFolder(id, null));
         restoreLastLocalTrack();
-        const handle = await idbGet("dirHandle");
-        if (handle) {
-          const permission = await handle.queryPermission({ mode: "read" });
-          if (permission === "granted") {
-            const tracks = (await scanDirHandle(handle)).filter(
-              (t) => !excludedTracks.has(t.id)
+        // One-time migration: builds before multi-folder support stored a
+        // single handle under "dirHandle" — file it under its per-folder key
+        // (unless a newer entry already exists) and drop the legacy key.
+        const legacyHandle = await idbGet("dirHandle");
+        if (legacyHandle?.name) {
+          if (!(await idbGet(`dirHandle:${legacyHandle.name}`))) {
+            await idbSet(`dirHandle:${legacyHandle.name}`, legacyHandle).catch(
+              () => {}
             );
-            addTracks(tracks);
-            showFolderChip(handle);
-            restoreLastLocalTrack();
-          } else if (restoreBanner) {
-            restoreName.textContent = handle.name;
-            restoreBanner.hidden = false;
-            restoreBanner.onclick = async () => {
-              if (
-                (await handle.requestPermission({ mode: "read" })) === "granted"
-              ) {
-                restoreBanner.hidden = true;
-                const tracks = (await scanDirHandle(handle)).filter(
-                  (t) => !excludedTracks.has(t.id)
-                );
-                addTracks(tracks);
-                showFolderChip(handle);
-                // Resume the last folder track, but never yank active playback.
-                if (!wavesurfer.isPlaying()) restoreLastLocalTrack();
-              }
-            };
+          }
+          await idbDel("dirHandle").catch(() => {});
+        }
+        // Every stored folder is linked (and gets its chip, even while its
+        // permission is still pending) — granted ones scan right away, the
+        // rest queue up for the restore banner.
+        const storedHandles = await idbGetByPrefix("dirHandle:");
+        for (const { value: handle } of storedHandles) {
+          if (!handle || typeof handle.name !== "string") continue;
+          linkFolder(handle.name, handle);
+          try {
+            if (
+              (await handle.queryPermission({ mode: "read" })) === "granted"
+            ) {
+              await restoreDirHandle(handle);
+            } else {
+              pendingRestoreHandles.push(handle);
+            }
+          } catch {
+            pendingRestoreHandles.push(handle);
           }
         }
+        if (pendingRestoreHandles.length) showRestoreBannerForNext();
       } catch {
         // IndexedDB unavailable — local music stays session-only.
       } finally {
@@ -1718,4 +1994,14 @@
     window.addEventListener("beforeunload", savePositionNow);
     window.addEventListener("pagehide", savePositionNow);
   });
+
+  // Test hook: the pure id/identity helpers behind the multi-folder logic,
+  // so tests can assert the derivation without a picker or IndexedDB.
+  if (typeof window !== "undefined") {
+    window.__folderTestHooks = {
+      buildFolderTrackId,
+      folderIdFromRelPath,
+      folderIdFromDirFileKey,
+    };
+  }
 })();

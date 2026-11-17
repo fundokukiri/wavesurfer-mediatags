@@ -835,12 +835,29 @@ body {
   }
 }
 
-#folder-chip,
+#folder-chip-list {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  margin-top: 12px;
+  flex-shrink: 0;
+  /* One sliding strip instead of a growing column: many folders cost one
+     row of height, never more. */
+  overflow-x: auto;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  padding: 2px;
+}
+
+#folder-chip-list::-webkit-scrollbar {
+  display: none;
+}
+
+.folder-chip,
 #files-chip {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
   padding: 8px 12px;
   border-radius: 10px;
   background: rgba(70, 118, 249, 0.08);
@@ -850,14 +867,18 @@ body {
   overflow: hidden;
 }
 
-#folder-chip .material-symbols-rounded,
+#files-chip {
+  margin-top: 12px;
+}
+
+.folder-chip .material-symbols-rounded,
 #files-chip .material-symbols-rounded {
   font-size: 18px;
   color: #4676f9;
   flex-shrink: 0;
 }
 
-#folder-chip-name,
+.folder-chip-name,
 #files-chip-name {
   flex: 1;
   min-width: 0;
@@ -867,7 +888,13 @@ body {
   font-weight: 600;
 }
 
-#folder-unlink,
+/* In the sliding strip each chip hugs its content (so the ✕ stays flush
+   right); this only caps LONG names so one folder can't own the strip. */
+.folder-chip-name {
+  max-width: 150px;
+}
+
+.folder-chip-unlink,
 #files-unlink {
   border: none;
   background: transparent;
@@ -880,17 +907,25 @@ body {
   flex-shrink: 0;
 }
 
-#folder-unlink .material-symbols-rounded,
+.folder-chip-unlink {
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.folder-chip-unlink .material-symbols-rounded,
 #files-unlink .material-symbols-rounded {
   font-size: 16px;
 }
 
-#folder-unlink:hover,
+.folder-chip-unlink:hover,
 #files-unlink:hover {
   color: #b3261e;
 }
 
-#folder-chip[hidden],
+.folder-chip-unlink:hover {
+  background: rgba(179, 38, 30, 0.12);
+}
+
+#folder-chip-list[hidden],
 #files-chip[hidden] {
   display: none;
 }
