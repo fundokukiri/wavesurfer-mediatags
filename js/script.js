@@ -131,9 +131,6 @@
     // frame and the browser rounds that into visible judder. Touch devices pay
     // for it with a 22,000px canvas at 2-3x DPR — measured at 60fps.
     minPxPerSec: 100,
-    // Scrubbing is done by hand below: wavesurfer's own drag lags and moves
-    // the playhead less than the distance dragged.
-    interact: false,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
@@ -1001,66 +998,6 @@
       )}`;
     });
 
-    // Drag the waveform to scrub: the centre line is the playhead, so dragging
-    // right goes forward and left goes back, one pixel of canvas per pixel of
-    // travel.
-    const waveStrip = document.querySelector("#waveform");
-    const wavePxPerSec = () => {
-      const wrapper = wavesurfer.getWrapper();
-      const duration = wavesurfer.getDuration();
-      return wrapper && duration ? wrapper.clientWidth / duration : 0;
-    };
-    let scrub = null;
-
-    // Capture phase: wavesurfer stops pointer events inside its shadow tree.
-    waveStrip?.addEventListener(
-      "pointerdown",
-      (e) => {
-        const pxPerSec = wavePxPerSec();
-        if (!pxPerSec) return;
-        scrub = {
-          x: e.clientX,
-          from: wavesurfer.getCurrentTime(),
-          pxPerSec,
-          moved: false,
-        };
-        waveStrip.setPointerCapture?.(e.pointerId);
-      },
-      true
-    );
-
-    waveStrip?.addEventListener(
-      "pointermove",
-      (e) => {
-        if (!scrub) return;
-        if (!scrub.moved && Math.abs(e.clientX - scrub.x) < 4) return;
-        scrub.moved = true;
-        const duration = wavesurfer.getDuration();
-        const time = scrub.from + (e.clientX - scrub.x) / scrub.pxPerSec;
-        wavesurfer.setTime(Math.min(Math.max(time, 0), duration));
-      },
-      true
-    );
-
-    const endScrub = (e) => {
-      if (!scrub) return;
-      const drag = scrub;
-      scrub = null;
-      if (drag.moved || e.type !== "pointerup") return;
-      // A tap with no travel seeks to the spot that was tapped.
-      const scroll = wavesurfer.getWrapper()?.parentElement;
-      if (!scroll) return;
-      const offset = e.clientX - waveStrip.getBoundingClientRect().left;
-      wavesurfer.setTime(
-        Math.min(
-          Math.max((scroll.scrollLeft + offset) / drag.pxPerSec, 0),
-          wavesurfer.getDuration()
-        )
-      );
-    };
-    waveStrip?.addEventListener("pointerup", endScrub, true);
-    waveStrip?.addEventListener("pointercancel", endScrub, true);
-
     seekBar.addEventListener("input", () => {
       const value = Number(seekBar.value);
       // No loaded media yet (or a load in flight): the duration belongs to
@@ -1168,13 +1105,10 @@
       let startX = 0;
       let startY = 0;
       let tracking = false;
-      // Sliders, text fields, the chip strip and the waveform own their
-      // horizontal drags.
+      // Sliders, text fields and the chip strip own their horizontal drags.
       const ownsDrag = (target) =>
         target instanceof Element &&
-        Boolean(
-          target.closest("input, textarea, select, #folder-chip-list, #waveform")
-        );
+        Boolean(target.closest("input, textarea, select, #folder-chip-list"));
 
       document.addEventListener(
         "touchstart",
