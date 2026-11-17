@@ -1,35 +1,34 @@
-// Pure-logic test of the `finish` guard: a 1-song playlist must not reload.
+// Loads the real end-of-track decision (js/finish.js) and checks it — no copy
+// of the branches lives here, so editing the player breaks this test.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 
-// Mirrors the branch added at the top of wavesurfer.on("finish").
-function onFinish({ length, isRepeat }, actions) {
-  if (length < 2) {
-    actions.push("seekTo(0)");
-    if (isRepeat === 2) actions.push("play");
-    return;
-  }
-  if (isRepeat === 1) { actions.push("next"); return; }
-  if (isRepeat === 2) { actions.push("seekTo(0)", "play"); return; }
-  actions.push(length === 1 ? "reload" : "next-or-pause");
-}
+const ctx = { window: {} };
+runInNewContext(readFileSync(new URL("../js/finish.js", import.meta.url), "utf8"), ctx);
+const finishAction = ctx.window.finishAction;
 
-test("one-song playlist rewinds, never reloads", () => {
+test("one-song playlist rewinds, never advances", () => {
   for (const isRepeat of [0, 1, 2]) {
-    const actions = [];
-    onFinish({ length: 1, isRepeat }, actions);
-    assert.ok(!actions.includes("reload"), `repeat=${isRepeat} reloaded`);
+    const actions = finishAction(1, isRepeat, 0);
+    assert.ok(actions.includes("rewind"), `repeat=${isRepeat}: ${actions}`);
+    assert.ok(
+      !actions.includes("next") && !actions.includes("next-paused"),
+      `repeat=${isRepeat} advanced: ${actions}`
+    );
   }
 });
 
 test("one-song playlist with repeat-one keeps playing", () => {
-  const actions = [];
-  onFinish({ length: 1, isRepeat: 2 }, actions);
-  assert.deepEqual(actions, ["seekTo(0)", "play"]);
+  assert.deepEqual([...finishAction(1, 2, 0)], ["rewind", "play"]);
 });
 
-test("repeat-one on a multi-song playlist advances", () => {
-  const actions = [];
-  onFinish({ length: 5, isRepeat: 1 }, actions);
-  assert.deepEqual(actions, ["next"]);
+test("repeat-all on a multi-song playlist advances", () => {
+  assert.deepEqual([...finishAction(5, 1, 4)], ["next"]);
+});
+
+test("end of playlist with repeat off loads and holds the first track", () => {
+  assert.deepEqual([...finishAction(5, 0, 4)], ["next-paused"]);
+  assert.deepEqual([...finishAction(5, 0, 1)], ["next"]);
 });

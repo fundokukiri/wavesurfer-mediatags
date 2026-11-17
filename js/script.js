@@ -160,7 +160,7 @@
       .sort((a, b) =>
         a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
       )
-      .map((name) => ({ name: name.slice(0, -4), path: AUDIO_FOLDER + name }));
+      .map((name) => ({ name: name.replace(/\.[^.]+$/, ""), path: AUDIO_FOLDER + name }));
 
   const scanDirectoryListing = async (folderUrl) => {
     const response = await fetch(folderUrl);
@@ -231,25 +231,38 @@
 
   const resolveTrackUrl = (track) => new URL(track.path, document.baseURI).href;
 
+  // One probe element and a queue: a folder of 300 songs used to create 300
+  // media elements at once, which mobile Safari will not load.
+  const durationQueue = [];
+  const probe = new Audio();
+  probe.preload = "metadata";
+  let probing = false;
+  const runProbe = () => {
+    if (probing) return;
+    const job = durationQueue.shift();
+    if (!job) return;
+    probing = true;
+    const finish = (seconds) => {
+      durationCache[job.track.path] = seconds;
+      job.onDone(seconds);
+      probe.removeAttribute("src");
+      probe.load();
+      probing = false;
+      runProbe();
+    };
+    probe.onloadedmetadata = () => finish(probe.duration);
+    probe.onerror = () => finish(NaN); // remember the failure, show "--:--"
+    probe.src = job.url;
+  };
+
   const loadDuration = (track, onDone) => {
     const cached = durationCache[track.path];
     if (cached !== undefined) {
       onDone(cached);
       return;
     }
-    const probe = new Audio();
-    probe.preload = "metadata";
-    probe.onloadedmetadata = () => {
-      durationCache[track.path] = probe.duration;
-      onDone(probe.duration);
-      probe.removeAttribute("src");
-      probe.load();
-    };
-    probe.onerror = () => {
-      durationCache[track.path] = NaN; // remember the failure, show "--:--"
-      onDone(NaN);
-    };
-    probe.src = resolveTrackUrl(track);
+    durationQueue.push({ track, onDone, url: resolveTrackUrl(track) });
+    runProbe();
   };
 
   // ---------------------------------------------------------------------------
@@ -462,7 +475,7 @@
           folderId,
           id: buildFolderTrackId(folderId, prefix, entry.name, file.size),
         });
-      } else if (entry.kind === "directory" && depth < 2) {
+      } else if (entry.kind === "directory" && depth < 8) {
         tracks.push(
           ...(await scanDirHandle(
             entry,
@@ -488,7 +501,7 @@
           },
           () => resolve()
         );
-      } else if (entry.isDirectory && depth < 2) {
+      } else if (entry.isDirectory && depth < 8) {
         const reader = entry.createReader();
         const readBatch = () => {
           reader.readEntries(async (batch) => {
@@ -515,18 +528,18 @@
     const settings = loadSettings();
 
     let allTracks = [];
+    // Shown after the first render: an empty server playlist must not stop
+    // startup, or saved local music would never be restored.
+    let emptyMessage = null;
     try {
       allTracks = await loadPlaylist();
     } catch (err) {
       console.error("Playlist scan failed:", err);
-      renderPlaylistStatus(
-        "Could not read the audio folder. Serve the app over HTTP with directory listing enabled, or generate audio/playlist.json (node scripts/generate-playlist.mjs) and refresh."
-      );
-      return;
+      emptyMessage =
+        "Could not read the audio folder. Serve the app over HTTP with directory listing enabled, or generate audio/playlist.json (node scripts/generate-playlist.mjs) and refresh.";
     }
-    if (!allTracks.length) {
-      renderPlaylistStatus(`No MP3 files found in "${AUDIO_FOLDER}".`);
-      return;
+    if (!allTracks.length && !emptyMessage) {
+      emptyMessage = `No MP3 files found in "${AUDIO_FOLDER}".`;
     }
 
     let index = 0;
@@ -550,9 +563,18 @@
     }
     // Session-only — reload always returns to the full playlist.
     let favOnly = false;
+    // Session-only too: the folder chip being filtered, or null for all.
+    let folderFilter = null;
     const excludedTracks = new Set(
       Array.isArray(settings.excludedTracks) ? settings.excludedTracks : []
     );
+    // Re-adding a linked folder starts fresh: lift exactly its exclusions so
+    // the songs a bulk clear hid come back (README behaviour).
+    const liftFolderExclusions = (folderId) => {
+      excludedTracks.forEach((id) => {
+        if (folderOwnsTrackId(folderId, id)) excludedTracks.delete(id);
+      });
+    };
     // Tombstones: file keys the user removed — guards against an IDB delete
     // racing a fast reload, which would otherwise bring the track back.
     const removedFileKeys = new Set(
@@ -625,10 +647,12 @@
       return { url: URL.createObjectURL(new Blob([bytes], { type })), type };
     };
 
+    // Same track asked by the playlist row and the player — parse it once.
+    const pendingMeta = {};
     const getTrackMeta = (i) => {
       const track = shuffledArray[i];
       if (metaCache[track.path]) return Promise.resolve(metaCache[track.path]);
-      return new Promise((resolve) => {
+      return (pendingMeta[track.path] ||= new Promise((resolve) => {
         const fallback = parseFallbackName(track.name);
         jsmediatags.read(track.file || resolveTrackUrl(track), {
           onSuccess: (tag) => {
@@ -655,7 +679,7 @@
             resolve(meta);
           },
         });
-      });
+      }));
     };
 
     const applyTrackMetadata = (i) => {
@@ -800,6 +824,7 @@
     // outgoing media — keep it and apply it once the new track is ready.
     let pendingSeek = null;
     const loadTrack = (i) => {
+      if (!shuffledArray.length) return;
       pendingSeek = null;
       initialLoadDone = true;
       pendingLoads++;
@@ -1019,26 +1044,24 @@
     });
 
     wavesurfer.on("finish", () => {
-      // A one-song playlist reloading itself would re-decode the same file
-      // forever — just rewind in place instead.
-      if (shuffledArray.length < 2) {
-        wavesurfer.seekTo(0);
-        if (isRepeat === 2) wavesurfer.play();
-        return;
-      }
-      if (isRepeat === 1) {
-        goToNextTrack();
-      } else if (isRepeat === 2) {
-        wavesurfer.seekTo(0);
-        wavesurfer.play();
-      } else {
-        const next = (index + 1) % shuffledArray.length;
-        if (next === 0) {
-          // End of playlist: load the first track but keep it paused — the
-          // ready handler skips play() for exactly this track.
+      for (const action of window.finishAction(
+        shuffledArray.length,
+        isRepeat,
+        index
+      )) {
+        if (action === "next") {
+          goToNextTrack();
+        } else if (action === "next-paused") {
+          // Keep the first track paused: the ready handler skips play() for
+          // exactly this track.
+          const next = (index + 1) % shuffledArray.length;
           pauseOnReadyKey = shuffledArray[next].id || shuffledArray[next].path;
+          loadTrack(next);
+        } else if (action === "rewind") {
+          wavesurfer.seekTo(0);
+        } else if (action === "play") {
+          wavesurfer.play();
         }
-        loadTrack(next);
       }
     });
 
@@ -1110,6 +1133,8 @@
           // One key per folder — picking a new one never replaces or removes
           // an already linked folder.
           await idbSet(`dirHandle:${handle.name}`, handle).catch(() => {});
+          liftFolderExclusions(handle.name);
+          saveSettings({ excludedTracks: [...excludedTracks] });
           const tracks = (await scanDirHandle(handle)).filter(
             (t) => !excludedTracks.has(t.id)
           );
@@ -1154,8 +1179,12 @@
       if (files.length) {
         // Fallback picks have no handle — the top-level dir name is the
         // folder's identity for its chip and per-folder unlinking.
-        const relPath = files[0].webkitRelativePath || files[0].name;
-        linkFolder(folderIdFromRelPath(relPath), null);
+        const folderId = folderIdFromRelPath(
+          files[0].webkitRelativePath || files[0].name
+        );
+        liftFolderExclusions(folderId);
+        saveSettings({ excludedTracks: [...excludedTracks] });
+        linkFolder(folderId, null);
       }
       folderFallback.value = "";
     };
@@ -1201,6 +1230,7 @@
     });
 
     shuffleBtn.onclick = () => {
+      if (!shuffledArray.length) return;
       isShuffle = !isShuffle;
       shuffleBtnIcon.style.color = isShuffle ? "#4676f9" : "#4d4d4d";
       // Relocate the current track by its stable key — duplicate file names
@@ -1280,7 +1310,9 @@
           query === "" ||
           (info?.textContent || "").toLowerCase().includes(query);
         const matchesFavorites = !favOnly || favorites.has(track?.id || track?.path);
-        row.hidden = !matchesQuery || !matchesFavorites;
+        // Server songs have no folder, so they hide while a folder is filtered.
+        const matchesFolder = !folderFilter || track?.folderId === folderFilter;
+        row.hidden = !matchesQuery || !matchesFavorites || !matchesFolder;
         if (!row.hidden) visible++;
       });
       // A fully filtered list must explain itself — a blank area looks broken.
@@ -1309,7 +1341,9 @@
     const updatePlaylistSubtitle = () => {
       if (!playlistSubtitle) return;
       const visible = shuffledArray.filter(
-        (track) => !favOnly || favorites.has(track.id || track.path)
+        (track) =>
+          (!favOnly || favorites.has(track.id || track.path)) &&
+          (!folderFilter || track.folderId === folderFilter)
       );
       const totalSeconds = visible.reduce((sum, track) => {
         const duration = durationCache[track.path];
@@ -1331,7 +1365,6 @@
         const row = document.createElement("div");
         row.className = "tbody-playlist";
         row.dataset.index = i;
-        row.dataset.trackId = item.id || item.path;
 
         const number = document.createElement("span");
         number.className = "tp-number";
@@ -1586,7 +1619,8 @@
     const removeTracks = (targets) => {
       if (!targets.length) return;
       const keys = new Set(targets.map((t) => t.id || t.path));
-      const wasPlaying = keys.has(loadedKey);
+      const wasLoaded = keys.has(loadedKey);
+      const wasPlaying = wavesurfer.isPlaying();
       allTracks = allTracks.filter((t) => !keys.has(t.id || t.path));
       shuffledArray = shuffledArray.filter((t) => !keys.has(t.id || t.path));
       if (!shuffledArray.length) {
@@ -1608,7 +1642,12 @@
           : Math.min(index, shuffledArray.length - 1);
       renderPlaylist();
       updatePlaylistSubtitle();
-      if (wasPlaying) {
+      if (wasLoaded) {
+        // A paused player stays paused: hold the replacement through ready.
+        if (!wasPlaying) {
+          const next = shuffledArray[index];
+          pauseOnReadyKey = next.id || next.path;
+        }
         loadTrack(index);
       } else {
         highlightPlaylist(index);
@@ -1638,7 +1677,14 @@
       });
       ids.forEach((id) => {
         const chip = document.createElement("div");
-        chip.className = "folder-chip";
+        chip.className = folderFilter === id ? "folder-chip active" : "folder-chip";
+        // Clicking the chip filters the playlist to it; clicking again clears.
+        chip.onclick = () => {
+          folderFilter = folderFilter === id ? null : id;
+          renderFolderChips();
+          applySearchFilter();
+          updatePlaylistSubtitle();
+        };
         const icon = document.createElement("span");
         icon.className = "material-symbols-rounded";
         icon.textContent = "folder_open";
@@ -1653,7 +1699,10 @@
         unlinkIcon.className = "material-symbols-rounded";
         unlinkIcon.textContent = "close";
         unlink.append(unlinkIcon);
-        unlink.onclick = () => unlinkFolderFlow(id);
+        unlink.onclick = (e) => {
+          e.stopPropagation(); // unlinking must not also toggle the filter
+          unlinkFolderFlow(id);
+        };
         chip.append(icon, label, unlink);
         folderChipList.append(chip);
       });
@@ -1859,9 +1908,9 @@
       // Exclusions only mattered while the folder was linked — lift exactly
       // its entries so re-linking starts fresh. Never .clear(): that would
       // un-hide other folders' removed songs on their next rescan.
-      excludedTracks.forEach((id) => {
-        if (folderOwnsTrackId(folderId, id)) excludedTracks.delete(id);
-      });
+      liftFolderExclusions(folderId);
+      // The filtered folder is gone; never keep hiding the rest behind it.
+      if (folderFilter === folderId) folderFilter = null;
       saveSettings({
         excludedTracks: [...excludedTracks],
         removedFileKeys: [...removedFileKeys],
@@ -1920,6 +1969,7 @@
     }
 
     renderPlaylist();
+    if (emptyMessage) renderPlaylistStatus(emptyMessage);
     // Establish the chip container's state even before anything is linked.
     renderFolderChips();
 

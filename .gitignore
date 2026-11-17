@@ -18,3 +18,7 @@ npm-debug.log*
 # Local tool settings
 .claude/
 .zcode/
+
+# Code intelligence indexes (codegraph / graphify)
+.codegraph/
+graphify-out/

@@ -6,30 +6,14 @@
 // Real MP3s are copied as fixtures because the app filters by extension and
 // parses tags — garbage bytes could fail the boot in unrelated ways.
 import { firefox } from "playwright";
-import { createServer } from "node:http";
-import { readFile, rm } from "node:fs/promises";
-import { existsSync, mkdirSync, mkdtempSync, copyFileSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, copyFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { startServer } from "./server.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const MIME = {
-  ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".mp3": "audio/mpeg",
-  ".jpg": "image/jpeg", ".png": "image/png",
-};
-
-const server = createServer(async (req, res) => {
-  const u = decodeURIComponent(req.url.split("?")[0]);
-  const f = join(ROOT, u.endsWith("/") ? `${u}index.html` : u);
-  if (!existsSync(f)) {
-    res.statusCode = 404;
-    return res.end("not found");
-  }
-  res.setHeader("Content-Type", MIME[extname(f)] || "application/octet-stream");
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(0, r));
+const { server, base } = await startServer(ROOT);
 
 // Two fixture folders: A has two songs, B has one.
 const fixtures = mkdtempSync(join(tmpdir(), "multi-folder-"));
@@ -79,7 +63,7 @@ const check = (name, cond) => {
 };
 
 try {
-  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.goto(base);
   await page.waitForSelector(".tbody-playlist, .playlist-status", { timeout: 15000 });
   await page.waitForTimeout(2500); // boot restore settle (timers in app)
 
@@ -110,6 +94,25 @@ try {
   // which the album art toggles open; wait out its 0.3s slide-in transition.
   await page.click(".album-art");
   await page.waitForTimeout(400);
+
+  // Filter by folder: the first chip (folder A) shows only its two songs;
+  // clicking it again clears the filter.
+  const visibleRows = () =>
+    page.evaluate(
+      () => document.querySelectorAll(".tbody-playlist:not([hidden])").length
+    );
+  await page.locator(".folder-chip").first().click();
+  await page.waitForTimeout(200);
+  check(
+    "chip click shows only that folder's songs",
+    (await visibleRows()) === 2
+  );
+  await page.locator(".folder-chip").first().click();
+  await page.waitForTimeout(200);
+  check(
+    "clicking the chip again shows every song",
+    (await visibleRows()) === baseline.rows + 3
+  );
   // Confirm modal needs two OK clicks.
   await page.locator(".folder-chip").nth(1).locator(".folder-chip-unlink").click();
   await page.waitForSelector("#confirm-modal:not([hidden])", { timeout: 5000 });
@@ -133,6 +136,27 @@ try {
   );
   c = await getCounts();
   check("after reload: folder A persisted", c.rows === baseline.rows + 2 && c.chips === 1);
+
+  // Bulk clear (long-press the folder button), then re-pick the same folder:
+  // its songs come back — the clear's exclusions are lifted on re-add.
+  await page.click(".album-art");
+  await page.waitForTimeout(400);
+  await page.hover("#folder-open");
+  await page.mouse.down();
+  await page.waitForTimeout(900);
+  await page.mouse.up();
+  await page.waitForSelector("#confirm-modal:not([hidden])", { timeout: 5000 });
+  await page.click("#confirm-ok");
+  await page.click("#confirm-ok");
+  await waitForCounts(
+    { rows: baseline.rows, chips: 1 },
+    "bulk clear drops every folder song, keeps the chip"
+  );
+  await page.setInputFiles("#folder-fallback", folderA);
+  await waitForCounts(
+    { rows: baseline.rows + 2, chips: 1 },
+    "re-picking the folder brings its songs back"
+  );
 
   check("no page errors", errors.length === 0);
   if (errors.length) console.log(`  page errors: ${errors.join(" | ")}`);

@@ -2,29 +2,11 @@
 // Run: node test/browser.mjs   (playwright must be installed, see package.json)
 // On this sandbox Chrome needs host libs: prefix with LD_LIBRARY_PATH=/run/host/usr/lib
 import { chromium } from "playwright";
-import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { startServer } from "./server.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const MIME = {
-  ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".mp3": "audio/mpeg",
-  ".jpg": "image/jpeg", ".png": "image/png",
-};
-
-const server = createServer(async (req, res) => {
-  const u = decodeURIComponent(req.url.split("?")[0]);
-  const f = join(ROOT, u.endsWith("/") ? `${u}index.html` : u);
-  if (!existsSync(f)) {
-    res.statusCode = 404;
-    return res.end("not found");
-  }
-  res.setHeader("Content-Type", MIME[extname(f)] || "application/octet-stream");
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(0, r));
+const { server, base } = await startServer(ROOT);
 
 const browser = await chromium.launch({
   args: ["--autoplay-policy=no-user-gesture-required", "--no-sandbox"],
@@ -33,7 +15,7 @@ const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 
-await page.goto(`http://127.0.0.1:${server.address().port}`);
+await page.goto(base);
 await page.waitForSelector(".tbody-playlist", { timeout: 15000 });
 await page.waitForTimeout(2500);
 
