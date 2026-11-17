@@ -2,7 +2,7 @@
 
 ## 2026-11-17 (fixes)
 
-- On a touch device, swipe right from the left edge to open the playlist and
+- On a touch device, swipe right anywhere to open the playlist and
   swipe left to close it. Desktop keeps the album-art and backdrop clicks;
   sliders, text fields and the folder chip strip keep their own drags.
 
