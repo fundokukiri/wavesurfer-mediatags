@@ -2,6 +2,10 @@
 
 ## 2026-11-17 (fixes)
 
+- On a touch device, swipe right from the left edge to open the playlist and
+  swipe left to close it. Desktop keeps the album-art and backdrop clicks;
+  sliders, text fields and the folder chip strip keep their own drags.
+
 - Clicking a linked folder's chip filters the playlist to that folder;
   clicking it again shows everything. Search and ♥ keep filtering on top, the
   subtitle counts the filtered songs, and unlinking the folder clears it.

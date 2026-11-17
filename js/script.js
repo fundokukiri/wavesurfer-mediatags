@@ -1086,6 +1086,53 @@
       sidebar.classList.remove("active");
     bgLayer.onclick = () => sidebar.classList.remove("active");
 
+    // Touch only: swipe right from the left edge opens the playlist, swipe
+    // left closes it. Mouse/desktop keeps the art and backdrop clicks.
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      const EDGE_PX = 40;
+      const MIN_SWIPE_PX = 60;
+      let startX = 0;
+      let startY = 0;
+      let tracking = false;
+      // Sliders, text fields and the chip strip own their horizontal drags.
+      const ownsDrag = (target) =>
+        target instanceof Element &&
+        Boolean(target.closest("input, textarea, select, #folder-chip-list"));
+
+      document.addEventListener(
+        "touchstart",
+        (e) => {
+          const touch = e.touches[0];
+          tracking =
+            !ownsDrag(e.target) &&
+            (sidebar.classList.contains("active") ||
+              (e.touches.length === 1 && touch.clientX <= EDGE_PX));
+          if (!tracking) return;
+          startX = touch.clientX;
+          startY = touch.clientY;
+        },
+        { passive: true }
+      );
+
+      document.addEventListener(
+        "touchend",
+        (e) => {
+          if (!tracking) return;
+          tracking = false;
+          const touch = e.changedTouches[0];
+          if (!touch) return;
+          const dx = touch.clientX - startX;
+          const dy = touch.clientY - startY;
+          // Mostly horizontal and long enough, or it was a tap or a scroll.
+          if (Math.abs(dx) < MIN_SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.5)
+            return;
+          if (dx > 0) sidebar.classList.add("active");
+          else sidebar.classList.remove("active");
+        },
+        { passive: true }
+      );
+    }
+
     searchToggle.onclick = () => {
       if (!searchWrap) return;
       const isOpen = searchWrap.classList.toggle("open");
