@@ -89,6 +89,40 @@ try {
   check("folder A: +2 rows", c.rows === baseline.rows + 2);
   check("folder A: exactly 1 chip", c.chips === 1);
 
+  // Each imported file keeps its own tags: they used to share one cache slot
+  // (local files have no path), so every folder track showed the first file's
+  // title and artist.
+  await page.click(".album-art");
+  await page.waitForTimeout(450);
+  const indexes = await page.evaluate(() =>
+    [...document.querySelectorAll(".tbody-playlist")].map((row) =>
+      Number(row.dataset.index)
+    )
+  );
+  const hoverCard = async (index) => {
+    await page.locator(`.tbody-playlist[data-index="${index}"]`).hover();
+    await page.waitForTimeout(900);
+    return page.evaluate(() => ({
+      title: document.querySelector("#track-tooltip .tp-tip-title")?.textContent,
+      artist: document.querySelector("#track-tooltip .tp-tip-artist")?.textContent,
+    }));
+  };
+  const cardA = await hoverCard(indexes[indexes.length - 2]);
+  const cardB = await hoverCard(indexes[indexes.length - 1]);
+  check(
+    "each folder track shows its own title in the card",
+    Boolean(cardA.title) && Boolean(cardB.title) && cardA.title !== cardB.title,
+    `"${cardA.title}" vs "${cardB.title}"`
+  );
+  check(
+    "the card shows the tag artist, not the file name",
+    cardA.artist === "Son Tung M-TP" && cardB.artist === "Son Tung M-TP",
+    `"${cardA.artist}" / "${cardB.artist}"`
+  );
+  // The open panel covers the player, so close it through the DOM.
+  await page.evaluate(() => document.querySelector(".album-art img").click());
+  await page.waitForTimeout(450);
+
   // THE regression: folder B must be ADDED, not replace folder A.
   await page.setInputFiles("#folder-fallback", folderB);
   await waitForCounts(

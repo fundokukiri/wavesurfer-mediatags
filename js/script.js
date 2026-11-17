@@ -650,8 +650,11 @@
     const pendingMeta = {};
     const getTrackMeta = (i) => {
       const track = shuffledArray[i];
-      if (metaCache[track.path]) return Promise.resolve(metaCache[track.path]);
-      return (pendingMeta[track.path] ||= new Promise((resolve) => {
+      // Local files have no path, so keying by path put every folder track in
+      // one cache slot: the first parsed file's tags answered for all of them.
+      const key = track.id || track.path;
+      if (metaCache[key]) return Promise.resolve(metaCache[key]);
+      return (pendingMeta[key] ||= new Promise((resolve) => {
         const fallback = parseFallbackName(track.name);
         jsmediatags.read(track.file || resolveTrackUrl(track), {
           onSuccess: (tag) => {
@@ -664,7 +667,7 @@
               artworkUrl: pic?.url || DEFAULT_ARTWORK,
               artworkType: pic?.type || "image/jpeg",
             };
-            metaCache[track.path] = meta;
+            metaCache[key] = meta;
             resolve(meta);
           },
           onError: () => {
@@ -674,7 +677,7 @@
               album: fallback.album,
               artworkUrl: DEFAULT_ARTWORK,
             };
-            metaCache[track.path] = meta;
+            metaCache[key] = meta;
             resolve(meta);
           },
         });
@@ -1632,7 +1635,7 @@
       );
       field(sourceIcon(track), "Nguồn", describeSource(track));
       field("description", "Tệp", track.name);
-      return { album, art };
+      return { album, art, title, artist };
     };
 
     const placeTooltip = (row) => {
@@ -1658,11 +1661,15 @@
       const track = shuffledArray[Number(row.dataset.index)];
       if (!track) return;
       hoveredRow = row;
-      const { album, art } = fillTooltip(track);
+      const { album, art, title, artist } = fillTooltip(track);
       tooltipEl.hidden = false;
       placeTooltip(row);
       getTrackMeta(Number(row.dataset.index)).then((meta) => {
         if (hoveredRow !== row) return;
+        // Tags win over the file name, exactly as the playlist rows do: files
+        // imported from a folder are often named "track 01.mp3".
+        title.textContent = meta.title;
+        artist.textContent = meta.artist;
         album.textContent = meta.album || "—";
         art.src = meta.artworkUrl;
         placeTooltip(row);
