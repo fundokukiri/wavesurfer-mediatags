@@ -1055,3 +1055,47 @@ body {
   color: #fff;
   font: 13px/1.4 Helvetica, Arial, sans-serif;
 }
+
+/* Full track info on hover; the playlist row itself ends in an ellipsis. */
+#track-tooltip {
+  position: fixed;
+  z-index: 10001; /* the sidebar sits at 9999 */
+  max-width: 260px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(40, 60, 90, 0.22);
+  font-size: 12px;
+  color: #2f3b4c;
+  pointer-events: none; /* never steal the hover that opened it */
+}
+
+#track-tooltip[hidden] {
+  display: none;
+}
+
+.tp-tip-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.tp-tip-row {
+  display: flex;
+  gap: 8px;
+}
+
+.tp-tip-row + .tp-tip-row {
+  margin-top: 3px;
+}
+
+.tp-tip-label {
+  color: #7a8aa0;
+  flex-shrink: 0;
+  min-width: 58px;
+}
+
+.tp-tip-value {
+  word-break: break-word;
+}

@@ -1082,10 +1082,19 @@
       applyVolume(Number(volumeSlider.value) / 100)
     );
 
-    trackArt.onclick = () => sidebar.classList.toggle("active");
-    app.querySelector(".sidebar .sidebar-overlay").onclick = () =>
+    // Closes the panel and drops the hover card that pointed into it.
+    const closeSidebar = () => {
       sidebar.classList.remove("active");
-    bgLayer.onclick = () => sidebar.classList.remove("active");
+      // Declared further down, but only ever called from a user gesture.
+      hideTooltip();
+    };
+
+    trackArt.onclick = () =>
+      sidebar.classList.contains("active")
+        ? closeSidebar()
+        : sidebar.classList.add("active");
+    app.querySelector(".sidebar .sidebar-overlay").onclick = closeSidebar;
+    bgLayer.onclick = closeSidebar;
 
     // Touch only: swipe right opens the playlist, swipe left closes it.
     // Mouse/desktop keeps the art and backdrop clicks. No edge requirement:
@@ -1126,7 +1135,7 @@
           if (Math.abs(dx) < MIN_SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.5)
             return;
           if (dx > 0) sidebar.classList.add("active");
-          else sidebar.classList.remove("active");
+          else closeSidebar();
         },
         { passive: true }
       );
@@ -1537,6 +1546,102 @@
       tbody.append(emptyHint);
       applySearchFilter();
     };
+
+    // The row truncates with an ellipsis, so hover shows the whole record.
+    const tooltipEl = document.querySelector("#track-tooltip");
+    let hoveredRow = null;
+
+    const hideTooltip = () => {
+      hoveredRow = null;
+      if (tooltipEl) tooltipEl.hidden = true;
+    };
+
+    const describeSource = (track) => {
+      if (track.source === "folder") return `Thư mục: ${track.folderId}`;
+      if (track.source === "file") return "Tệp đã thêm";
+      return "Máy chủ (audio/)";
+    };
+
+    // Returns the Album value node: tags are parsed asynchronously, so the
+    // caller fills it once getTrackMeta settles.
+    const fillTooltip = (track) => {
+      const fallback = parseFallbackName(track.name);
+      tooltipEl.textContent = "";
+      const title = document.createElement("div");
+      title.className = "tp-tip-title";
+      title.textContent = fallback.title;
+      tooltipEl.append(title);
+
+      const field = (label, value) => {
+        const line = document.createElement("div");
+        line.className = "tp-tip-row";
+        const name = document.createElement("span");
+        name.className = "tp-tip-label";
+        name.textContent = label;
+        const text = document.createElement("span");
+        text.className = "tp-tip-value";
+        text.textContent = value;
+        line.append(name, text);
+        tooltipEl.append(line);
+        return text;
+      };
+
+      field("Ca sĩ", fallback.artist);
+      const album = field("Album", "…");
+      const seconds = durationCache[track.path];
+      field(
+        "Thời lượng",
+        Number.isFinite(seconds) && seconds > 0 ? formatTime(seconds) : "—"
+      );
+      field("Nguồn", describeSource(track));
+      field("Tệp", track.name);
+      return album;
+    };
+
+    const placeTooltip = (row) => {
+      const rect = row.getBoundingClientRect();
+      const tip = tooltipEl.getBoundingClientRect();
+      const gap = 8;
+      const left = Math.min(
+        Math.max(gap, rect.left + gap),
+        window.innerWidth - tip.width - gap
+      );
+      // Above the row when it fits, below it otherwise.
+      const above = rect.top - tip.height - gap;
+      tooltipEl.style.left = `${left}px`;
+      tooltipEl.style.top = `${Math.max(
+        gap,
+        above >= gap ? above : Math.min(rect.bottom + gap, window.innerHeight - tip.height - gap)
+      )}px`;
+    };
+
+    const playlistBody = document.querySelector(".tbody");
+    // pointermove, not pointerover: a panel that slides in under a resting
+    // cursor must not pop a card nobody asked for.
+    playlistBody?.addEventListener("pointermove", (e) => {
+      if (e.pointerType !== "mouse" || !tooltipEl) return;
+      const row = e.target.closest?.(".tbody-playlist");
+      if (!row || row === hoveredRow) return;
+      const track = shuffledArray[Number(row.dataset.index)];
+      if (!track) return;
+      hoveredRow = row;
+      const album = fillTooltip(track);
+      tooltipEl.hidden = false;
+      placeTooltip(row);
+      getTrackMeta(Number(row.dataset.index)).then((meta) => {
+        if (hoveredRow !== row) return;
+        album.textContent = meta.album || "—";
+        placeTooltip(row);
+      });
+    });
+    playlistBody?.addEventListener("pointerout", (e) => {
+      if (!hoveredRow) return;
+      const to = e.relatedTarget;
+      if (to instanceof Node && hoveredRow.contains(to)) return;
+      hideTooltip();
+    });
+    // Any scroll (sidebar list, page) moves the row out from under the card.
+    document.addEventListener("scroll", hideTooltip, true);
 
     // Append tracks to the playlist, skipping ones already present.
     const addTracks = (tracks) => {
@@ -1976,7 +2081,7 @@
         else wavesurfer.play();
       } else {
         loadTrack(idx);
-        sidebar.classList.remove("active");
+        closeSidebar();
       }
     });
 
