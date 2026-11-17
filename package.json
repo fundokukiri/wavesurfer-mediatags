@@ -7,6 +7,7 @@
     "test:browser": "node test/browser.mjs && node test/resume.mjs && node test/multi-folder.e2e.mjs && node test/swipe.mjs && node test/tooltip.mjs && node test/unlink-pause.mjs"
   },
   "devDependencies": {
+    "node-id3": "^0.2.9",
     "playwright": "^1.65.1"
   }
 }
