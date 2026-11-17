@@ -129,9 +129,10 @@
     cursorWidth: 0,
     barRadius: 3,
     // Touch devices render the canvas at 2-3x DPR and keep scrolling it while
-    // playing — a 22,000px waveform janks them. A coarse pointer gets a 4x
-    // smaller canvas; desktop keeps the high detail.
-    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 25 : 100,
+    // playing, so they get half the density of desktop (11,000px instead of
+    // 22,000px). Going below 50 makes the canvas creep 0.4px per frame, which
+    // the browser rounds into visible judder.
+    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 50 : 100,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
