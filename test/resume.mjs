@@ -3,26 +3,11 @@
 //   2. a reload continues the track that was playing
 // Run: node test/resume.mjs
 import { chromium } from "playwright";
-import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { startServer } from "./server.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const MIME = {
-  ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".mp3": "audio/mpeg",
-  ".jpg": "image/jpeg", ".png": "image/png",
-};
-const server = createServer(async (req, res) => {
-  const u = decodeURIComponent(req.url.split("?")[0]);
-  const f = join(ROOT, u.endsWith("/") ? `${u}index.html` : u);
-  if (!existsSync(f)) { res.statusCode = 404; return res.end("nf"); }
-  res.setHeader("Content-Type", MIME[extname(f)] || "application/octet-stream");
-  res.end(await readFile(f));
-});
-await new Promise((r) => server.listen(0, r));
-const base = `http://127.0.0.1:${server.address().port}`;
+const { server, base } = await startServer(ROOT);
 
 const browser = await chromium.launch({
   args: ["--autoplay-policy=no-user-gesture-required", "--no-sandbox"],
@@ -105,6 +90,38 @@ const afterBack = await page.evaluate(() =>
   Number(document.querySelector("#track-seek-bar").value)
 );
 check("returning to the resumed track starts at 0s", afterBack <= 2, `${afterBack}s`);
+
+// --- 4. removing the loaded track while paused stays paused --------------
+await page.setInputFiles(
+  "#local-files",
+  join(ROOT, "audio/Son Tung M-TP - Lạc Trôi.mp3")
+);
+await page.waitForTimeout(1500);
+// The playlist lives in the closed sidebar, behind #bg-layer until opened.
+await page.click(".album-art");
+await page.waitForTimeout(400);
+await page.locator(".tbody-playlist").last().click();
+await page.waitForTimeout(2500);
+// Pause, then remove exactly the track that is loaded.
+await page.evaluate(() => {
+  const icon = document.querySelector(".play-pause span");
+  if (icon.textContent === "pause") document.querySelector(".play-pause").click();
+});
+await page.waitForTimeout(500);
+// Picking a song closes the sidebar, so reopen it to reach .p-remove.
+await page.click(".album-art");
+await page.waitForTimeout(400);
+await page.locator(".tbody-playlist").last().locator(".p-remove").click();
+await page.waitForTimeout(3000);
+const afterRemove = await page.evaluate(() => ({
+  playing: Boolean(document.querySelector(".tbody-playlist.active.playing")),
+  icon: document.querySelector(".play-pause span").textContent,
+}));
+check(
+  "removing the paused track does not start playback",
+  !afterRemove.playing && afterRemove.icon === "play_arrow",
+  JSON.stringify(afterRemove)
+);
 
 await browser.close();
 server.close();
