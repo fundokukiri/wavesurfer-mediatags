@@ -537,6 +537,10 @@ body {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #c3d2e5 transparent;
+  /* Native momentum on touch; containing it stops a hard fling from bouncing
+     the page or firing Android pull-to-refresh. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .mini-playlist-container::-webkit-scrollbar {
@@ -845,6 +849,7 @@ body {
      row of height, never more. */
   overflow-x: auto;
   touch-action: pan-x;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
   padding: 2px;
 }
