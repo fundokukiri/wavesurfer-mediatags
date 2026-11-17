@@ -139,9 +139,7 @@ body {
 }
 
 #waveform {
-  cursor: ew-resize;
-  /* Sideways stays with the canvas; vertical page pan stays with the browser. */
-  touch-action: pan-y;
+  cursor: pointer;
 }
 
 .track-time {
