@@ -56,7 +56,7 @@ try {
   const row = await rowInfo(index);
   await page.locator(".tbody-playlist").nth(index).hover();
   // The card waits 2s of stillness so a click-to-pick never flashes it.
-  await page.waitForTimeout(1600);
+  await page.waitForTimeout(1300);
   const shown = await tip();
 
   check("hovering a row opens the card", !shown.hidden);
@@ -100,7 +100,7 @@ try {
   );
   const clickIndex = activeIndex === index ? (index + 1) % count : index;
   await page.locator(".tbody-playlist").nth(clickIndex).hover();
-  await page.waitForTimeout(1600);
+  await page.waitForTimeout(1300);
   check("hovering that row shows the card again", !(await tip()).hidden);
   await page.locator(".tbody-playlist").nth(clickIndex).click();
   await page.waitForTimeout(600);
