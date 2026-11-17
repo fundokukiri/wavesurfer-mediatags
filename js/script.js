@@ -111,7 +111,6 @@
   const DEFAULT_ARTWORK = "./assets/images/default-icon.jpg";
   const AUDIO_FOLDER = "audio/";
   const SETTINGS_KEY = "musicPlayer.settings";
-  const IS_FIREFOX = /firefox/i.test(navigator.userAgent);
   // iOS/iPadOS (iPads report a Mac UA but keep touch points) ignore
   // audio.volume — loudness is hardware-controlled there.
   const IS_IOS =
@@ -973,15 +972,6 @@
           : { lastTrack: currentTrack.name, lastTrackKey: currentKey }
       );
       updatePositionState();
-      // Firefox rasterizes the canvas stacks much slower than Chrome, and
-      // renderProgress re-clips them EVERY frame — a full-length waveform
-      // tanks its FPS. Cap the total width (~3 screens); Chrome keeps the
-      // full-detail render.
-      if (IS_FIREFOX && wavesurfer.getDuration() > 0) {
-        const cap = Math.max(window.innerWidth * 3, 2400);
-        const pxPerSec = cap / wavesurfer.getDuration();
-        if (pxPerSec < options.minPxPerSec) wavesurfer.zoom(pxPerSec);
-      }
       hadSuccessfulReady = true;
       loadedKey = currentKey;
     });
