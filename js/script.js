@@ -128,11 +128,10 @@
     hideScrollbar: true,
     cursorWidth: 0,
     barRadius: 3,
-    // Touch devices render the canvas at 2-3x DPR and keep scrolling it while
-    // playing, so they keep a lighter canvas than desktop (17,000px against
-    // 22,000px). Below 50 the canvas creeps under a pixel per frame and the
-    // browser rounds that into visible judder.
-    minPxPerSec: window.matchMedia("(pointer: coarse)").matches ? 75 : 100,
+    // 100px/s on every device: below ~50 the canvas creeps under a pixel per
+    // frame and the browser rounds that into visible judder. Touch devices pay
+    // for it with a 22,000px canvas at 2-3x DPR — measured at 60fps.
+    minPxPerSec: 100,
     mediaControls: false,
     autoScroll: true,
     autoCenter: true,
